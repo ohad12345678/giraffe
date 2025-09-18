@@ -167,6 +167,11 @@ def save_to_google_sheets(branch: str, chef: str, dish: str, score: int, notes: 
         google_creds = st.secrets.get("google_service_account", {})
         sheet_url = st.secrets.get("GOOGLE_SHEET_URL", "")
         
+        # תיקון project_id אם נדרש
+        if google_creds and google_creds.get("project_id") == "giraffe-472505":
+            google_creds = google_creds.copy()
+            google_creds["project_id"] = "giraffe"
+        
         if not google_creds or not sheet_url:
             return
             
