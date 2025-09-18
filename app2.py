@@ -50,7 +50,12 @@ MIN_CHEF_TOP_M = 5       # מינימום תצפיות לטבח מצטיין
 st.markdown(
     """
 <style>
-html, body, [class*="css"] { direction: rtl; font-family: "Rubik", -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+/* תיקון RTL רק לתוכן הראשי, לא לסרגל צד */
+.main .block-container { direction: rtl; font-family: "Rubik", -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+
+/* שמירה על סרגל צד בכיוון רגיל */
+.sidebar .sidebar-content { direction: ltr !important; }
+
 .header-wrap {
   background: linear-gradient(135deg, #0f172a 0%, #1f2937 50%, #0b1324 100%);
   color: #fff; padding: 26px 22px; border-radius: 18px; box-shadow: 0 8px 24px rgba(0,0,0,.25);
@@ -66,6 +71,11 @@ html, body, [class*="css"] { direction: rtl; font-family: "Rubik", -apple-system
 .hint { color:#6b7280; font-size:12px; }
 .badge { display:inline-block; padding:4px 10px; border-radius:999px; background:#f3f4f6; font-size:12px; margin-right:6px; }
 .btn-primary > button { background: linear-gradient(135deg, #f59e0b, #ff9800); color:white; border:0; border-radius:12px; padding:10px 16px; font-weight:700; width:100%; }
+
+/* תיקון שדות טקסט RTL */
+.stTextInput > div > div > input { text-align: right; }
+.stTextArea > div > div > textarea { text-align: right; }
+.stSelectbox > div > div { text-align: right; }
 </style>
 """,
     unsafe_allow_html=True,
@@ -348,9 +358,13 @@ st.subheader("🤖 ניתוח עם ChatGPT")
 try:
     # נסה קודם מ-Streamlit Secrets (רק ב-Cloud)
     api_key = st.secrets.get("OPENAI_API_KEY", "")
+    org_id = st.secrets.get("OPENAI_ORG", "")
+    project_id = st.secrets.get("OPENAI_PROJECT", "")
 except:
     # אם לא עובד (מקומי), נסה מ-.env או משתנה סביבה
     api_key = os.getenv("OPENAI_API_KEY", "")
+    org_id = os.getenv("OPENAI_ORG", "")
+    project_id = os.getenv("OPENAI_PROJECT", "")
 
 if not api_key:
     st.warning("🔑 לא נמצא מפתח OpenAI. הוסף OPENAI_API_KEY ב-Streamlit Secrets כדי להפעיל ניתוח AI.")
@@ -371,7 +385,14 @@ else:
     def call_openai(system_prompt: str, user_prompt: str) -> str:
         try:
             from openai import OpenAI
-            client = OpenAI(api_key=api_key)
+            # בניית הגדרות החיבור
+            client_kwargs = {"api_key": api_key}
+            if org_id:
+                client_kwargs["organization"] = org_id
+            if project_id:
+                client_kwargs["project"] = project_id
+            
+            client = OpenAI(**client_kwargs)
             resp = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
