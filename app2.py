@@ -295,64 +295,42 @@ with k4:
 st.markdown('</div>', unsafe_allow_html=True)
 
 # =========================
-# ------ GPT ANALYSIS -----
+# ------ DATA INSIGHTS -----
 # =========================
 st.markdown('<div class="card">', unsafe_allow_html=True)
-st.subheader("🤖 ניתוח עם ChatGPT (אופציונלי)")
+st.subheader("📊 תובנות נתונים")
 
-api_key = os.getenv("OPENAI_API_KEY", "")
-org_id = os.getenv("OPENAI_ORG")  # אופציונלי
-proj_id = os.getenv("OPENAI_PROJECT")  # אופציונלי
-
-gpt_col1, gpt_col2 = st.columns([2,1])
-with gpt_col1:
-    user_q = st.text_input("שאלה על הנתונים (למשל: מה התחום הכי נבחן בכל סניף?)", placeholder="כתוב כאן שאלה חופשית...")
-with gpt_col2:
-    do_insights = st.button("בצע ניתוח כללי")
-
-def df_to_csv_for_llm(df_in: pd.DataFrame, max_rows: int = 400) -> str:
-    d = df_in.copy()
-    if len(d) > max_rows:
-        d = d.head(max_rows)
-    return d.to_csv(index=False)
-
-def call_openai(system_prompt: str, user_prompt: str) -> str:
-    if not api_key:
-        return "❌ לא נמצא OPENAI_API_KEY — הוסף מפתח לקובץ .env או כמשתנה סביבה."
-    try:
-        # תמיכה ב-OpenAI v1+
-        from openai import OpenAI
-        kwargs = {"api_key": api_key}
-        if org_id: kwargs["organization"] = org_id
-        if proj_id: kwargs["project"] = proj_id
-        client = OpenAI(**kwargs)
-        resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.2,
-        )
-        return resp.choices[0].message.content.strip()
-    except Exception as e:
-        return f"❌ שגיאה בקריאה ל-OpenAI: {e}"
-
-SYSTEM_ANALYST = (
-    "אתה אנליסט דאטה דובר עברית. מוצגת לך טבלת בדיקות עם עמודות: "
-    "id, branch, chef_name, dish_name, score, notes, created_at. "
-    "סכם תובנות מרכזיות, דגשים, חריגים והמלצות קצרות. השתמש בשפה פשוטה וברורה."
-)
-
-if do_insights or (user_q and st.button("שלח שאלה")):
-    table_csv = df_to_csv_for_llm(df)
-    if do_insights:
-        user_prompt = f"הנה הטבלה בפורמט CSV:\n{table_csv}\n\nהפק תובנות מרכזיות בעברית."
-    else:
-        user_prompt = f"שאלה: {user_q}\n\nהנה הטבלה בפורמט CSV (עד 400 שורות):\n{table_csv}\n\nענה בעברית וקשר לנתונים."
-    with st.spinner("חושב..."):
-        answer = call_openai(SYSTEM_ANALYST, user_prompt)
-    st.markdown(answer)
+if not df.empty:
+    st.write("### סיכום כללי:")
+    
+    # תובנות בסיסיות
+    total_checks = len(df)
+    avg_score = df['score'].mean()
+    branches_active = df['branch'].nunique()
+    chefs_active = df['chef_name'].nunique()
+    dishes_tested = df['dish_name'].nunique()
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("סה\"כ בדיקות", total_checks)
+        st.metric("ממוצע ציון כללי", f"{avg_score:.2f}")
+    with col2:
+        st.metric("סניפים פעילים", branches_active)
+        st.metric("טבחים פעילים", chefs_active)
+    with col3:
+        st.metric("מנות נבדקות", dishes_tested)
+    
+    # תובנות מתקדמות
+    st.write("### פילוח לפי סניפים:")
+    branch_stats = df.groupby('branch').agg({
+        'score': ['count', 'mean'],
+        'chef_name': 'nunique'
+    }).round(2)
+    branch_stats.columns = ['בדיקות', 'ממוצע ציון', 'טבחים']
+    st.dataframe(branch_stats, use_container_width=True)
+    
+else:
+    st.info("אין נתונים עדיין - התחל למלא בדיקות!")
 
 st.markdown('</div>', unsafe_allow_html=True)
 
@@ -369,3 +347,4 @@ with colx:
 with coly:
     st.write(f"סה\"כ רשומות: **{len(df)}**")
 st.markdown('</div>', unsafe_allow_html=True)
+
