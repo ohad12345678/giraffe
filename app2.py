@@ -407,53 +407,80 @@ else:
 st.markdown('</div>', unsafe_allow_html=True)
 
 # =========================
-# ----- EXPORT / META -----
+# ----- ADMIN PANEL -------
 # =========================
-st.markdown('<div class="card">', unsafe_allow_html=True)
-st.subheader("📥 ייצוא ומידע")
+# חלק זה נגיש רק למנהלים מורשים
+admin_password = st.secrets.get("ADMIN_PASSWORD", "admin123")
 
-col1, col2, col3 = st.columns([1,1,2])
-with col1:
-    if st.button("⬇️ ייצוא CSV"):
-        csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button("הורדת קובץ CSV", data=csv, file_name="food_quality_export.csv", mime="text/csv")
-
-with col2:
-    # בדיקה אם Google Sheets מוגדר
-    try:
-        google_creds = st.secrets.get("google_service_account", {})
-        sheet_url = st.secrets.get("GOOGLE_SHEET_URL", "")
-        sheets_configured = bool(google_creds and sheet_url and GSHEETS_AVAILABLE)
-    except:
-        sheets_configured = False
+with st.sidebar:
+    st.markdown("---")
+    st.subheader("🔐 אזור מנהל")
     
-    if sheets_configured:
-        st.success("📊 Google Sheets מחובר")
-        if st.button("🔗 פתח גיליון"):
-            try:
-                sheet_url = st.secrets.get("GOOGLE_SHEET_URL", "")
-                st.markdown(f'<a href="{sheet_url}" target="_blank">פתח Google Sheet</a>', unsafe_allow_html=True)
-            except:
-                st.error("שגיאה בפתיחת הגיליון")
+    # בדיקת סיסמת מנהל
+    if "admin_logged_in" not in st.session_state:
+        st.session_state.admin_logged_in = False
+    
+    if not st.session_state.admin_logged_in:
+        password_input = st.text_input("סיסמת מנהל:", type="password", key="admin_password")
+        if st.button("התחבר כמנהל"):
+            if password_input == admin_password:
+                st.session_state.admin_logged_in = True
+                st.rerun()
+            else:
+                st.error("סיסמה שגויה")
     else:
-        st.info("📊 Google Sheets לא מוגדר")
-        with st.expander("הוראות הגדרה"):
-            st.markdown("""
-            **להגדרת Google Sheets:**
-            1. צור Google Sheet חדש
-            2. צור Service Account ב-Google Cloud Console
-            3. הורד את קובץ ה-JSON
-            4. הוסף ל-Streamlit Secrets:
-               - `google_service_account` - תוכן קובץ ה-JSON
-               - `GOOGLE_SHEET_URL` - קישור לגיליון
-            5. שתף את הגיליון עם כתובת המייל מ-Service Account
-            """)
+        st.success("מחובר כמנהל ✅")
+        if st.button("התנתק"):
+            st.session_state.admin_logged_in = False
+            st.rerun()
 
-with col3:
-    st.write(f"סה\"כ רשומות: **{len(df)}**")
-    if sheets_configured:
-        st.caption("✅ נתונים נשמרים אוטומטית ב-Google Sheets")
-    else:
-        st.caption("ℹ️ נתונים נשמרים מקומית בלבד")
+# חלק ייצוא - רק למנהלים
+if st.session_state.get("admin_logged_in", False):
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.subheader("📥 ייצוא ומידע - אזור מנהל")
 
-st.markdown('</div>', unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1,1,2])
+    with col1:
+        if st.button("⬇️ ייצוא CSV"):
+            csv = df.to_csv(index=False).encode("utf-8")
+            st.download_button("הורדת קובץ CSV", data=csv, file_name="food_quality_export.csv", mime="text/csv")
+
+    with col2:
+        # בדיקה אם Google Sheets מוגדר
+        try:
+            google_creds = st.secrets.get("google_service_account", {})
+            sheet_url = st.secrets.get("GOOGLE_SHEET_URL", "")
+            sheets_configured = bool(google_creds and sheet_url and GSHEETS_AVAILABLE)
+        except:
+            sheets_configured = False
+        
+        if sheets_configured:
+            st.success("📊 Google Sheets מחובר")
+            if st.button("🔗 פתח גיליון"):
+                try:
+                    sheet_url = st.secrets.get("GOOGLE_SHEET_URL", "")
+                    st.markdown(f'<a href="{sheet_url}" target="_blank">פתח Google Sheet</a>', unsafe_allow_html=True)
+                except:
+                    st.error("שגיאה בפתיחת הגיליון")
+        else:
+            st.info("📊 Google Sheets לא מוגדר")
+            with st.expander("הוראות הגדרה"):
+                st.markdown("""
+                **להגדרת Google Sheets:**
+                1. צור Google Sheet חדש
+                2. צור Service Account ב-Google Cloud Console
+                3. הורד את קובץ ה-JSON
+                4. הוסף ל-Streamlit Secrets:
+                   - `google_service_account` - תוכן קובץ ה-JSON
+                   - `GOOGLE_SHEET_URL` - קישור לגיליון
+                5. שתף את הגיליון עם כתובת המייל מ-Service Account
+                """)
+
+    with col3:
+        st.write(f"סה\"כ רשומות: **{len(df)}**")
+        if sheets_configured:
+            st.caption("✅ נתונים נשמרים אוטומטית ב-Google Sheets")
+        else:
+            st.caption("ℹ️ נתונים נשמרים מקומית בלבד")
+    
+    st.markdown('</div>', unsafe_allow_html=True)
