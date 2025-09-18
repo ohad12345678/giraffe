@@ -480,24 +480,42 @@ if st.session_state.get("admin_logged_in", False):
             st.download_button("הורדת קובץ CSV", data=csv, file_name="food_quality_export.csv", mime="text/csv")
 
     with col2:
-        # בדיקה אם Google Sheets מוגדר
+        # בדיקה מפורטת אם Google Sheets מוגדר
+        debug_info = []
+        
+        # בדיקה 1: gspread מותקן
+        debug_info.append(f"gspread זמין: {GSHEETS_AVAILABLE}")
+        
+        # בדיקה 2: secrets
         try:
             google_creds = st.secrets.get("google_service_account", {})
             sheet_url = st.secrets.get("GOOGLE_SHEET_URL", "")
+            debug_info.append(f"google_service_account קיים: {bool(google_creds)}")
+            debug_info.append(f"GOOGLE_SHEET_URL קיים: {bool(sheet_url)}")
+            
+            if google_creds:
+                debug_info.append(f"project_id: {google_creds.get('project_id', 'חסר')}")
+                debug_info.append(f"client_email: {google_creds.get('client_email', 'חסר')}")
+            
             sheets_configured = bool(google_creds and sheet_url and GSHEETS_AVAILABLE)
-        except:
+        except Exception as e:
+            debug_info.append(f"שגיאה בקריאת secrets: {e}")
             sheets_configured = False
         
         if sheets_configured:
             st.success("📊 Google Sheets מחובר")
             if st.button("🔗 פתח גיליון"):
                 try:
-                    sheet_url = st.secrets.get("GOOGLE_SHEET_URL", "")
                     st.markdown(f'<a href="{sheet_url}" target="_blank">פתח Google Sheet</a>', unsafe_allow_html=True)
                 except:
                     st.error("שגיאה בפתיחת הגיליון")
         else:
-            st.info("📊 Google Sheets לא מוגדר")
+            st.error("📊 Google Sheets לא מוגדר")
+            
+        # הצגת מידע debug
+        with st.expander("🔍 מידע טכני"):
+            for info in debug_info:
+                st.text(info)
             with st.expander("הוראות הגדרה"):
                 st.markdown("""
                 **להגדרת Google Sheets:**
