@@ -295,42 +295,70 @@ with k4:
 st.markdown('</div>', unsafe_allow_html=True)
 
 # =========================
-# ------ DATA INSIGHTS -----
+# ------ GPT ANALYSIS -----
 # =========================
 st.markdown('<div class="card">', unsafe_allow_html=True)
-st.subheader("📊 תובנות נתונים")
+st.subheader("🤖 ניתוח עם ChatGPT")
 
-if not df.empty:
-    st.write("### סיכום כללי:")
-    
-    # תובנות בסיסיות
-    total_checks = len(df)
-    avg_score = df['score'].mean()
-    branches_active = df['branch'].nunique()
-    chefs_active = df['chef_name'].nunique()
-    dishes_tested = df['dish_name'].nunique()
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("סה\"כ בדיקות", total_checks)
-        st.metric("ממוצע ציון כללי", f"{avg_score:.2f}")
-    with col2:
-        st.metric("סניפים פעילים", branches_active)
-        st.metric("טבחים פעילים", chefs_active)
-    with col3:
-        st.metric("מנות נבדקות", dishes_tested)
-    
-    # תובנות מתקדמות
-    st.write("### פילוח לפי סניפים:")
-    branch_stats = df.groupby('branch').agg({
-        'score': ['count', 'mean'],
-        'chef_name': 'nunique'
-    }).round(2)
-    branch_stats.columns = ['בדיקות', 'ממוצע ציון', 'טבחים']
-    st.dataframe(branch_stats, use_container_width=True)
-    
+# קבלת מפתח API מ-Streamlit Secrets או משתנה סביבה
+try:
+    # נסה קודם מ-Streamlit Secrets (רק ב-Cloud)
+    api_key = st.secrets.get("OPENAI_API_KEY", "")
+except:
+    # אם לא עובד (מקומי), נסה מ-.env או משתנה סביבה
+    api_key = os.getenv("OPENAI_API_KEY", "")
+
+if not api_key:
+    st.warning("🔑 לא נמצא מפתח OpenAI. הוסף OPENAI_API_KEY ב-Streamlit Secrets כדי להפעיל ניתוח AI.")
+    st.info("💡 ללא מפתח, עדיין ניתן להשתמש בכל יתר התכונות של האפליקציה.")
 else:
-    st.info("אין נתונים עדיין - התחל למלא בדיקות!")
+    gpt_col1, gpt_col2 = st.columns([2,1])
+    with gpt_col1:
+        user_q = st.text_input("שאלה על הנתונים (למשל: מה התחום הכי נבחן בכל סניף?)", placeholder="כתוב כאן שאלה חופשית...")
+    with gpt_col2:
+        do_insights = st.button("בצע ניתוח כללי")
+
+    def df_to_csv_for_llm(df_in: pd.DataFrame, max_rows: int = 400) -> str:
+        d = df_in.copy()
+        if len(d) > max_rows:
+            d = d.head(max_rows)
+        return d.to_csv(index=False)
+
+    def call_openai(system_prompt: str, user_prompt: str) -> str:
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=api_key)
+            resp = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.2,
+            )
+            return resp.choices[0].message.content.strip()
+        except Exception as e:
+            return f"❌ שגיאה בקריאה ל-OpenAI: {e}"
+
+    SYSTEM_ANALYST = (
+        "אתה אנליסט דאטה דובר עברית. מוצגת לך טבלת בדיקות עם עמודות: "
+        "id, branch, chef_name, dish_name, score, notes, created_at. "
+        "סכם תובנות מרכזיות, דגשים, חריגים והמלצות קצרות. השתמש בשפה פשוטה וברורה."
+    )
+
+    if do_insights or (user_q and st.button("שלח שאלה")):
+        if df.empty:
+            st.info("אין נתונים לניתוח עדיין. התחל למלא בדיקות!")
+        else:
+            table_csv = df_to_csv_for_llm(df)
+            if do_insights:
+                user_prompt = f"הנה הטבלה בפורמט CSV:\n{table_csv}\n\nהפק תובנות מרכזיות בעברית."
+            else:
+                user_prompt = f"שאלה: {user_q}\n\nהנה הטבלה בפורמט CSV (עד 400 שורות):\n{table_csv}\n\nענה בעברית וקשר לנתונים."
+            
+            with st.spinner("חושב..."):
+                answer = call_openai(SYSTEM_ANALYST, user_prompt)
+            st.markdown(answer)
 
 st.markdown('</div>', unsafe_allow_html=True)
 
@@ -347,4 +375,3 @@ with colx:
 with coly:
     st.write(f"סה\"כ רשומות: **{len(df)}**")
 st.markdown('</div>', unsafe_allow_html=True)
-
