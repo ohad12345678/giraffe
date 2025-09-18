@@ -412,27 +412,35 @@ st.markdown('</div>', unsafe_allow_html=True)
 # חלק זה נגיש רק למנהלים מורשים
 admin_password = st.secrets.get("ADMIN_PASSWORD", "admin123")
 
-with st.sidebar:
-    st.markdown("---")
-    st.subheader("🔐 אזור מנהל")
-    
-    # בדיקת סיסמת מנהל
-    if "admin_logged_in" not in st.session_state:
-        st.session_state.admin_logged_in = False
-    
-    if not st.session_state.admin_logged_in:
+# אזור מנהל בחלק התחתון
+st.markdown("---")
+st.markdown('<div class="card">', unsafe_allow_html=True)
+
+# בדיקת סיסמת מנהל
+if "admin_logged_in" not in st.session_state:
+    st.session_state.admin_logged_in = False
+
+if not st.session_state.admin_logged_in:
+    st.subheader("🔐 כניסה למנהל")
+    col1, col2, col3 = st.columns([2,1,2])
+    with col2:
         password_input = st.text_input("סיסמת מנהל:", type="password", key="admin_password")
-        if st.button("התחבר כמנהל"):
+        if st.button("התחבר", use_container_width=True):
             if password_input == admin_password:
                 st.session_state.admin_logged_in = True
                 st.rerun()
             else:
                 st.error("סיסמה שגויה")
-    else:
-        st.success("מחובר כמנהל ✅")
+else:
+    col1, col2 = st.columns([4,1])
+    with col1:
+        st.success("🔐 מחובר כמנהל")
+    with col2:
         if st.button("התנתק"):
             st.session_state.admin_logged_in = False
             st.rerun()
+
+st.markdown('</div>', unsafe_allow_html=True)
 
 # חלק ייצוא - רק למנהלים
 if st.session_state.get("admin_logged_in", False):
