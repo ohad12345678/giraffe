@@ -1,4 +1,6 @@
-streamlit
-pandas
-python-dotenv
-openai
+   streamlit
+   pandas
+   python-dotenv
+   openai
+   gspread
+   google-auth
