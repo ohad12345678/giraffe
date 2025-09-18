@@ -11,6 +11,13 @@ from typing import List, Optional, Tuple
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
+import json
+try:
+    import gspread
+    from google.oauth2.service_account import Credentials
+    GSHEETS_AVAILABLE = True
+except ImportError:
+    GSHEETS_AVAILABLE = False
 
 # =========================
 # ------- SETTINGS --------
@@ -122,14 +129,51 @@ def load_df() -> pd.DataFrame:
     return df
 
 def insert_record(branch: str, chef: str, dish: str, score: int, notes: str = "", submitted_by: Optional[str] = None):
+    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # שמירה ב-SQLite
     c = conn()
     cur = c.cursor()
     cur.execute(
         "INSERT INTO food_quality (branch, chef_name, dish_name, score, notes, created_at, submitted_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (branch.strip(), chef.strip(), dish.strip(), int(score), notes.strip(), datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), submitted_by),
+        (branch.strip(), chef.strip(), dish.strip(), int(score), notes.strip(), timestamp, submitted_by),
     )
     c.commit()
     c.close()
+    
+    # שמירה ב-Google Sheets (אם מוגדר)
+    try:
+        save_to_google_sheets(branch, chef, dish, score, notes, timestamp)
+    except Exception as e:
+        st.warning(f"נשמר מקומית, אבל לא ניתן לשמור ב-Google Sheets: {e}")
+
+def save_to_google_sheets(branch: str, chef: str, dish: str, score: int, notes: str, timestamp: str):
+    """שמירה ב-Google Sheets"""
+    if not GSHEETS_AVAILABLE:
+        return
+    
+    try:
+        # קבלת הגדרות Google Sheets
+        google_creds = st.secrets.get("google_service_account", {})
+        sheet_url = st.secrets.get("GOOGLE_SHEET_URL", "")
+        
+        if not google_creds or not sheet_url:
+            return
+            
+        # התחברות ל-Google Sheets
+        credentials = Credentials.from_service_account_info(google_creds)
+        gc = gspread.authorize(credentials)
+        
+        # פתיחת הגיליון
+        sheet = gc.open_by_url(sheet_url).sheet1
+        
+        # הוספת שורה חדשה
+        row_data = [timestamp, branch, chef, dish, score, notes or ""]
+        sheet.append_row(row_data)
+        
+    except Exception as e:
+        # אם יש שגיאה, נמשיך בלי Google Sheets
+        pass
 
 def has_recent_duplicate(branch: str, chef: str, dish: str, hours: int = DUP_HOURS) -> bool:
     if hours <= 0:
@@ -367,11 +411,49 @@ st.markdown('</div>', unsafe_allow_html=True)
 # =========================
 st.markdown('<div class="card">', unsafe_allow_html=True)
 st.subheader("📥 ייצוא ומידע")
-colx, coly = st.columns([1,3])
-with colx:
+
+col1, col2, col3 = st.columns([1,1,2])
+with col1:
     if st.button("⬇️ ייצוא CSV"):
         csv = df.to_csv(index=False).encode("utf-8")
         st.download_button("הורדת קובץ CSV", data=csv, file_name="food_quality_export.csv", mime="text/csv")
-with coly:
+
+with col2:
+    # בדיקה אם Google Sheets מוגדר
+    try:
+        google_creds = st.secrets.get("google_service_account", {})
+        sheet_url = st.secrets.get("GOOGLE_SHEET_URL", "")
+        sheets_configured = bool(google_creds and sheet_url and GSHEETS_AVAILABLE)
+    except:
+        sheets_configured = False
+    
+    if sheets_configured:
+        st.success("📊 Google Sheets מחובר")
+        if st.button("🔗 פתח גיליון"):
+            try:
+                sheet_url = st.secrets.get("GOOGLE_SHEET_URL", "")
+                st.markdown(f'<a href="{sheet_url}" target="_blank">פתח Google Sheet</a>', unsafe_allow_html=True)
+            except:
+                st.error("שגיאה בפתיחת הגיליון")
+    else:
+        st.info("📊 Google Sheets לא מוגדר")
+        with st.expander("הוראות הגדרה"):
+            st.markdown("""
+            **להגדרת Google Sheets:**
+            1. צור Google Sheet חדש
+            2. צור Service Account ב-Google Cloud Console
+            3. הורד את קובץ ה-JSON
+            4. הוסף ל-Streamlit Secrets:
+               - `google_service_account` - תוכן קובץ ה-JSON
+               - `GOOGLE_SHEET_URL` - קישור לגיליון
+            5. שתף את הגיליון עם כתובת המייל מ-Service Account
+            """)
+
+with col3:
     st.write(f"סה\"כ רשומות: **{len(df)}**")
+    if sheets_configured:
+        st.caption("✅ נתונים נשמרים אוטומטית ב-Google Sheets")
+    else:
+        st.caption("ℹ️ נתונים נשמרים מקומית בלבד")
+
 st.markdown('</div>', unsafe_allow_html=True)
