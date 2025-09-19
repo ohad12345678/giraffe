@@ -1,5 +1,5 @@
-# app2.py — ג'ירף מטבחים · איכויות אוכל (גרסה מינימלית)
-# דרישות: streamlit, pandas, python-dotenv
+# app2.py — ג'ירף מטבחים · איכויות אוכל (מינימלי + KPI גרפיים + GPT)
+# דרישות: streamlit, pandas, python-dotenv, matplotlib
 # אופציונלי: gspread, google-auth
 # הרצה: streamlit run app2.py
 
@@ -11,6 +11,7 @@ from typing import List, Optional, Tuple
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
+import matplotlib.pyplot as plt
 
 # ===== Optional Google Sheets =====
 try:
@@ -41,6 +42,10 @@ DB_PATH = "food_quality.db"
 MIN_CHEF_TOP_M = 5
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 
+# צבעים לגרפים (כחול בהיר וירוק בהיר)
+COLOR_NET = "#93C5FD"    # light blue
+COLOR_BRANCH = "#9AE6B4"  # light green
+
 # =========================
 # ---------- STYLE --------
 # =========================
@@ -48,26 +53,31 @@ st.markdown("""
 <style>
 :root{
   --bg:#f7f8fa; --surface:#ffffff; --text:#0f172a; --muted:#6b7280;
-  --border:#e6e8ef; --primary:#0ea5a4; --primary-weak:#d1fae5;
+  --border:#e6e8ef; --primary:#0ea5a4;
+  --mint-50:#ecfdf5; --mint-100:#d1fae5; --mint-700:#0d6b62;
 }
 html,body,.main{background:var(--bg);}
 html, body, .main, .block-container, .sidebar .sidebar-content{direction:rtl;}
 .main .block-container{font-family:"Rubik",-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;}
 
-/* Header מינימלי */
-.header-min{background:var(--surface); border:1px solid var(--border);
-  border-radius:18px; padding:18px; box-shadow:0 4px 18px rgba(10,20,40,.04); margin-bottom:14px;}
-.header-min .title{font-size:26px; font-weight:900; color:var(--text); margin:0;}
-.header-min .sub{display:none;} /* הוסר הטקסט המשני */
+/* Header ירקרק עדין */
+.header-min{
+  background:linear-gradient(135deg, var(--mint-50) 0%, #ffffff 70%);
+  border:1px solid var(--mint-100); border-radius:18px; padding:18px;
+  box-shadow:0 6px 22px rgba(13,107,98,.08); margin-bottom:14px;
+}
+.header-min .title{font-size:26px; font-weight:900; color:var(--mint-700); margin:0;}
+.header-min .sub{display:none;} /* לא מציגים טקסט משנה */
 
 /* כרטיס סטנדרטי */
 .card{background:var(--surface); border:1px solid var(--border); border-radius:16px;
   padding:16px; box-shadow:0 4px 18px rgba(10,20,40,.04); margin-bottom:12px;}
 
 /* Status bar מינימלי */
-.status-min{display:flex; align-items:center; gap:10px; background:var(--surface);
+.status-min{display:flex; align-items:center; gap:10px; background:#fff;
   border:1px solid var(--border); border-radius:14px; padding:10px 12px;}
-.chip{padding:4px 10px; border:1px solid var(--border); border-radius:999px; font-weight:800; font-size:12px; color:var(--text); background:#fbfbfd}
+.chip{padding:4px 10px; border:1px solid var(--mint-100); border-radius:999px;
+  font-weight:800; font-size:12px; color:var(--mint-700); background:var(--mint-50)}
 
 /* קלטים */
 .stTextInput input, .stTextArea textarea{background:#fff !important; color:var(--text) !important;
@@ -75,39 +85,30 @@ html, body, .main, .block-container, .sidebar .sidebar-content{direction:rtl;}
 .stSelectbox div[data-baseweb="select"]{background:#fff !important; color:var(--text) !important;
   border-radius:12px !important; border:1px solid var(--border) !important;}
 .stTextInput label, .stTextArea label, .stSelectbox label{color:var(--text) !important; font-weight:800 !important;}
-/* פוקוס דק ועדין */
 .stTextInput input:focus, .stTextArea textarea:focus, .stSelectbox [data-baseweb="select"]:focus-within{
   outline:none !important; box-shadow:0 0 0 2px rgba(14,165,164,.18) !important; border-color:var(--primary) !important;}
 
-/* כפתור ראשי נקי */
+/* כפתור ראשי */
 .stButton>button{
-  background:var(--primary) !important; color:#fff !important; border:0 !important; border-radius:12px !important;
-  padding:10px 14px !important; font-weight:900 !important; box-shadow:0 4px 16px rgba(14,165,164,.25) !important;}
+  background:var(--primary) !important; color:#fff !important; border:0 !important;
+  border-radius:12px !important; padding:10px 14px !important; font-weight:900 !important;
+  box-shadow:0 4px 16px rgba(14,165,164,.25) !important;}
 .stButton>button:hover{filter:saturate(1.05) brightness(1.02);}
 
-/* הסתרת הודעת “Press Enter to submit/apply” */
+/* הסתרת “Press Enter to submit/apply” */
 div[data-testid="stWidgetInstructions"]{display:none !important;}
 
-/* KPI מינימלי – מספרים בלבד בתוך הקוביה */
+/* KPI לטבח מצטיין — מספר יחיד */
 .kpi-title{font-weight:900; color:var(--text); font-size:15px; margin:0 0 8px;}
 .kpi-min{background:#fff; border:1px solid var(--border); border-radius:14px; padding:14px;
   box-shadow:0 4px 16px rgba(10,20,40,.05);}
-.kpi-body{display:flex; align-items:baseline; justify-content:center; gap:14px;}
-.kpi-num{font-size:38px; font-weight:900; color:var(--text); font-variant-numeric:tabular-nums;}
-.kpi-sep{width:1px; height:22px; background:var(--border);}
-
-/* מובייל */
-@media (max-width:480px){
-  .kpi-num{font-size:42px}
-  .main .block-container{padding-left:12px; padding-right:12px;}
-}
+.kpi-single-num{font-size:42px; font-weight:900; color:var(--text); text-align:center;}
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown("""
 <div class="header-min">
   <p class="title">ג'ירף מטבחים – איכויות אוכל</p>
-  <p class="sub">טופס הזנת בדיקות איכות + KPI מספריים</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -158,7 +159,7 @@ def load_df() -> pd.DataFrame:
     return df
 
 def insert_record(branch: str, chef: str, dish: str, score: int, notes: str = "", submitted_by: Optional[str] = None):
-    """שומר ל-SQLite ול-Google Sheets (אם קיים). אין בדיקת כפילויות."""
+    """שומר ל-SQLite ול-Google Sheets (אם קיים)."""
     timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     c = conn()
     cur = c.cursor()
@@ -174,7 +175,6 @@ def insert_record(branch: str, chef: str, dish: str, score: int, notes: str = ""
         st.warning(f"נשמר מקומית, אך לא לגיליון: {e}")
 
 def save_to_google_sheets(branch: str, chef: str, dish: str, score: int, notes: str, timestamp: str):
-    """שמירה ב-Google Sheets (אם הגדרות קיימות)."""
     if not GSHEETS_AVAILABLE:
         return
     sheet_url = st.secrets.get("GOOGLE_SHEET_URL", "") or os.getenv("GOOGLE_SHEET_URL", "")
@@ -189,7 +189,7 @@ def save_to_google_sheets(branch: str, chef: str, dish: str, score: int, notes: 
     if not (sheet_url and creds):
         return
     try:
-        credentials = Credentials.from_service_account_info(creds).with_scopes(SCOPES)
+        credentials = Credentials.from_service_account_info(creds)
         gc = gspread.authorize(credentials)
         sheet = gc.open_by_url(sheet_url).sheet1
         sheet.append_row([timestamp, branch, chef, dish, score, notes or ""])
@@ -218,47 +218,25 @@ def dish_avg_branch(df: pd.DataFrame, branch: str, dish: str) -> Optional[float]
     d = df[(df["branch"] == branch) & (df["dish_name"] == dish)]
     return float(d["score"].mean()) if not d.empty else None
 
-def top_chef_network(df: pd.DataFrame, min_n: int = MIN_CHEF_TOP_M) -> Tuple[Optional[str], Optional[float], int]:
+def top_chef_network_with_branch(df: pd.DataFrame, min_n: int = MIN_CHEF_TOP_M) -> Tuple[Optional[str], Optional[str], Optional[float], int]:
+    """הטבח המצטיין + הסניף הדומיננטי עבורו, ממוצע ונפח."""
     if df.empty:
-        return None, None, 0
+        return None, None, None, 0
     g = df.groupby("chef_name").agg(n=("id","count"), avg=("score","mean")).reset_index()
     g = g.sort_values(["n","avg"], ascending=[False, False])
     qual = g[g["n"] >= min_n]
     pick = qual.iloc[0] if not qual.empty else g.iloc[0]
-    return str(pick["chef_name"]), float(pick["avg"]), int(pick["n"])
-
-# פורמט מספרים
-def _fmt(v: Optional[float], decimals: int = 2) -> str:
-    if v is None:
-        return "—"
-    try:
-        if abs(v - int(v)) < 1e-9:
-            return f"{int(v)}"
-        return f"{float(v):.{decimals}f}"
-    except Exception:
-        return "—"
-
-# רנדר KPI מינימלי
-def render_kpi_min(title: str, left_value: Optional[float], right_value: Optional[float], decimals: int = 2):
-    st.markdown(f'<div class="kpi-title">{title}</div>', unsafe_allow_html=True)
-    st.markdown(
-        f"""
-        <div class="kpi-min">
-          <div class="kpi-body">
-            <div class="kpi-num">{_fmt(left_value, decimals)}</div>
-            <div class="kpi-sep"></div>
-            <div class="kpi-num">{_fmt(right_value, decimals)}</div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    chef = str(pick["chef_name"])
+    avg = float(pick["avg"])
+    n = int(pick["n"])
+    mode_branch = df[df["chef_name"] == chef]["branch"].value_counts().idxmax()
+    return chef, mode_branch, avg, n
 
 # =========================
 # ------ LOGIN & CONTEXT --
 # =========================
 def require_auth() -> dict:
-    """מסך כניסה: 'סניף' (בחירת שם סניף) או 'מטה' (ללא סיסמה)."""
+    """מסך כניסה: 'סניף' (בחירת סניף) או 'מטה' (ללא סיסמה)."""
     if "auth" not in st.session_state:
         st.session_state.auth = {"role": None, "branch": None}
     auth = st.session_state.auth
@@ -287,7 +265,7 @@ def require_auth() -> dict:
 
 auth = require_auth()
 
-# Status bar מינימלי — רק שם הסניף או "מטה"
+# Status bar — רק שם הסניף או "מטה"
 if auth["role"] == "branch":
     st.markdown(f'<div class="status-min"><span class="chip">{auth["branch"]}</span></div>', unsafe_allow_html=True)
 else:
@@ -308,9 +286,8 @@ with st.form("quality_form", clear_on_submit=False):
         with colA:
             st.text_input("שם סניף", value=selected_branch, disabled=True)
 
-    # שם הטבח — ללא placeholder וללא הודעת "Press Enter…"
     with colB:
-        chef = st.text_input("שם הטבח *")
+        chef = st.text_input("שם הטבח *")  # ללא placeholder
 
     with colC:
         dish = st.selectbox("שם המנה *", options=DISHES, index=0)
@@ -344,10 +321,26 @@ st.markdown('</div>', unsafe_allow_html=True)
 df = load_df()
 st.markdown('<div class="card">', unsafe_allow_html=True)
 
+def bar_compare(title: str, labels: list[str], values: list[float], colors: list[str]):
+    """גרף עמודות קטן ונקי להשוואה בין שני ערכים."""
+    fig, ax = plt.subplots(figsize=(4.8, 3.0), dpi=160)
+    bars = ax.bar(labels, values, color=colors, width=0.55)
+    for b in bars:
+        height = b.get_height()
+        ax.text(b.get_x() + b.get_width()/2, height + 0.05, f"{height:.2f}",
+                ha="center", va="bottom", fontsize=9)
+    ax.set_ylim(0, max(values) * 1.25 if values and max(values) > 0 else 1)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.grid(axis='y', linestyle=':', alpha=0.35)
+    ax.set_ylabel("") ; ax.set_xlabel("")
+    st.markdown(f"**{title}**")
+    st.pyplot(fig, clear_figure=True)
+
 if df.empty:
     st.info("אין נתונים להצגה עדיין.")
 else:
-    # ממוצעים רשת/סניף
+    # ממוצעי רשת/סניף
     net_avg = network_avg(df)
     br_avg = branch_avg(df, selected_branch) if selected_branch else None
 
@@ -355,37 +348,116 @@ else:
     net_dish_avg = dish_avg_network(df, dish) if dish else None
     br_dish_avg = dish_avg_branch(df, selected_branch, dish) if (selected_branch and dish) else None
 
-    # טבח מצטיין
-    chef_name, chef_avg, chef_n = top_chef_network(df, MIN_CHEF_TOP_M)
+    # 1) גרף השוואה — ממוצע ציון רשת מול הסניף
+    if net_avg is not None and br_avg is not None:
+        bar_compare(
+            title=f"ממוצע ציון — השוואה רשת מול {selected_branch}",
+            labels=["רשת", selected_branch],
+            values=[net_avg, br_avg],
+            colors=[COLOR_NET, COLOR_BRANCH],
+        )
+    else:
+        st.info("אין מספיק נתונים להצגת ממוצע ציון רשת/סניף.")
 
-    # KPI 1 — ממוצע ציון: רשת | {branch}
-    render_kpi_min(
-        title=f"ממוצע ציון — רשת | {selected_branch}",
-        left_value=net_avg,
-        right_value=br_avg,
-        decimals=2
-    )
-    st.markdown("<br/>", unsafe_allow_html=True)
+    st.markdown("<hr style='border:none;border-top:1px solid #e6e8ef;margin:14px 0'/>", unsafe_allow_html=True)
 
-    # KPI 2 — ממוצע ציון למנה: רשת | {branch}
-    render_kpi_min(
-        title=f"ממוצע ציון למנה \"{dish}\" — רשת | {selected_branch}",
-        left_value=net_dish_avg,
-        right_value=br_dish_avg,
-        decimals=2
-    )
-    st.markdown("<br/>", unsafe_allow_html=True)
+    # 2) גרף השוואה — ממוצע ציון למנה (רשת מול הסניף)
+    if net_dish_avg is not None and br_dish_avg is not None:
+        bar_compare(
+            title=f"ממוצע ציון למנה \"{dish}\" — רשת מול {selected_branch}",
+            labels=["רשת · מנה", f"{selected_branch} · מנה"],
+            values=[net_dish_avg, br_dish_avg],
+            colors=[COLOR_NET, COLOR_BRANCH],
+        )
+    else:
+        st.info("אין מספיק נתונים למנה הנבחרת להצגת השוואה.")
 
-    # KPI 3 — הטבח המצטיין (שם בכותרת; בקוביה: ממוצע | N)
-    chef_title = "הטבח המצטיין ברשת" + (f" — {chef_name}" if chef_name else "")
-    render_kpi_min(
-        title=chef_title,
-        left_value=chef_avg,
-        right_value=int(chef_n) if chef_n else None,
-        decimals=2
-    )
+    st.markdown("<hr style='border:none;border-top:1px solid #e6e8ef;margin:14px 0'/>", unsafe_allow_html=True)
+
+    # 3) הטבח המצטיין — שם טבח + שם מסעדה (סניף) + ממוצע, ללא השוואה
+    chef_name, chef_branch, chef_avg, chef_n = top_chef_network_with_branch(df, MIN_CHEF_TOP_M)
+    title = "הטבח המצטיין ברשת"
+    if chef_name:
+        title += f" — {chef_name} · {chef_branch or ''}".strip()
+    st.markdown(f'<div class="kpi-title">{title}</div>', unsafe_allow_html=True)
+    st.markdown('<div class="kpi-min"><div class="kpi-single-num">{}</div></div>'.format(
+        "—" if chef_avg is None else f"{chef_avg:.2f}"
+    ), unsafe_allow_html=True)
 
 st.markdown('</div>', unsafe_allow_html=True)
+
+# =========================
+# ----- GPT ANALYSIS ------
+# =========================
+st.markdown('<div class="card">', unsafe_allow_html=True)
+st.markdown("**ניתוח GPT**")
+
+if df.empty:
+    st.info("אין נתונים לניתוח עדיין.")
+    st.markdown('</div>', unsafe_allow_html=True)
+else:
+    SYSTEM_ANALYST = (
+        "אתה אנליסט דאטה דובר עברית. מוצגת לך טבלה עם העמודות: "
+        "id, branch, chef_name, dish_name, score, notes, created_at. "
+        "ענה בתמציתיות, בעברית, עם דגשים והמלצות קצרות."
+    )
+
+    def df_to_csv_for_llm(df_in: pd.DataFrame, max_rows: int = 400) -> str:
+        d = df_in.copy()
+        if len(d) > max_rows:
+            d = d.head(max_rows)
+        return d.to_csv(index=False)
+
+    def call_openai(system_prompt: str, user_prompt: str) -> str:
+        try:
+            from openai import OpenAI
+            api_key = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", ""))
+            org_id = st.secrets.get("OPENAI_ORG", os.getenv("OPENAI_ORG", ""))
+            project_id = st.secrets.get("OPENAI_PROJECT", os.getenv("OPENAI_PROJECT", ""))
+            if not api_key:
+                return "חסר מפתח OPENAI_API_KEY (ב-Secrets או בקובץ ‎.env)."
+
+            client_kwargs = {"api_key": api_key}
+            if org_id:
+                client_kwargs["organization"] = org_id
+            if project_id:
+                client_kwargs["project"] = project_id
+
+            client = OpenAI(**client_kwargs)
+            resp = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.2,
+            )
+            return (resp.choices[0].message.content or "").strip()
+        except Exception as e:
+            return f"שגיאה בקריאה ל-OpenAI: {e}"
+
+    col_q, col_btn = st.columns([3, 1])
+    with col_q:
+        user_q = st.text_input("שאלה על הנתונים (לא חובה)")
+    with col_btn:
+        ask_btn = st.button("שלח")
+    run_overview = st.button("ניתוח כללי")
+
+    if run_overview or ask_btn:
+        table_csv = df_to_csv_for_llm(df)
+        if run_overview:
+            user_prompt = f"הנה הטבלה בפורמט CSV:\n{table_csv}\n\nסכם מגמות, חריגים והמלצות קצרות לניהול."
+        else:
+            user_prompt = (
+                f"שאלה: {user_q}\n\n"
+                f"הנה הטבלה בפורמט CSV (עד 400 שורות):\n{table_csv}\n\n"
+                f"ענה בעברית, תן נימוק קצר לכל מסקנה."
+            )
+        with st.spinner("מנתח..."):
+            answer = call_openai(SYSTEM_ANALYST, user_prompt)
+        st.write(answer)
+
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # =========================
 # ----- ADMIN PANEL -------
@@ -398,7 +470,7 @@ st.markdown('<div class="card">', unsafe_allow_html=True)
 if "admin_logged_in" not in st.session_state:
     st.session_state.admin_logged_in = False
 
-# התנתקות משתמש (כדי לבחור סניף/מצב מחדש)
+# התנתקות משתמש
 c1, c2 = st.columns([4,1])
 with c1:
     st.caption("לחזרה למסך כניסה: התנתק משתמש.")
