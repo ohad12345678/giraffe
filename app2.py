@@ -1,5 +1,5 @@
 # app2.py — 🍜 ג'ירף מטבחים – איכויות אוכל
-# דרישות חובה: streamlit, pandas, python-dotenv
+# דרישות: streamlit, pandas, python-dotenv
 # אופציונלי: gspread, google-auth
 # הרצה: streamlit run app2.py
 
@@ -12,7 +12,7 @@ import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 
-# נסה לייבא Google Sheets (לא חובה)
+# ===== Optional Google Sheets =====
 try:
     import gspread
     from google.oauth2.service_account import Credentials
@@ -38,11 +38,8 @@ DISHES: List[str] = [
 ]
 
 DB_PATH = "food_quality.db"
-MIN_CHEF_TOP_M = 5
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
-]
+MIN_CHEF_TOP_M = 5  # מינימום בדיקות לטבח מצטיין
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 
 # =========================
 # ---------- STYLE --------
@@ -55,7 +52,7 @@ html, body, .main { background:#2f1c46; }
 html, body, .main, .block-container, .sidebar .sidebar-content { direction: rtl; }
 .main .block-container{ font-family:"Rubik", -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
 
-/* Header זכוכיתי עם גרדיינט */
+/* Header */
 .header-wrap{
   position:relative; overflow:hidden;
   background:linear-gradient(135deg,#3b2460 0%, #4a2b77 60%, #36205a 100%);
@@ -81,7 +78,7 @@ html, body, .main, .block-container, .sidebar .sidebar-content { direction: rtl;
 }
 .status-bar .tag{ padding:6px 12px; border-radius:999px; background:#efe9ff; color:#2f1c46; font-weight:800; }
 
-/* שדות טופס — שחור על אפור עדין, ללא placeholder ב'שם הטבח' */
+/* שדות טופס — שחור על אפור עדין */
 .stTextInput input, .stTextArea textarea{
   color:#0f172a !important; background:#f3f5f9 !important; border-radius:14px !important;
 }
@@ -90,6 +87,11 @@ html, body, .main, .block-container, .sidebar .sidebar-content { direction: rtl;
 }
 .stTextInput label, .stTextArea label, .stSelectbox label{
   color:#0b1220 !important; font-weight:800 !important;
+}
+
+/* פוקוס נקי */
+.stTextInput input:focus, .stTextArea textarea:focus, .stSelectbox [data-baseweb="select"]:focus-within{
+  outline:none !important; box-shadow:0 0 0 3px rgba(124,58,237,.18) !important; border-color:#c4b5fd !important;
 }
 
 /* כפתור ראשי */
@@ -102,19 +104,23 @@ html, body, .main, .block-container, .sidebar .sidebar-content { direction: rtl;
 .stButton>button:hover{ transform: translateY(-1px) scale(1.01); }
 
 /* KPI — מספרים בלבד */
-.kpi{
-  display:flex; align-items:center; justify-content:center;
-  height:110px; border-radius:16px; border:1px solid #eceef6;
-  background:#ffffff; box-shadow:0 16px 40px rgba(12,16,39,.12);
-  font-size:34px; font-weight:900; color:#0f172a;
-  font-variant-numeric: tabular-nums;
+.kpi-card{
+  background:#fff; border:1px solid #eceef6; border-radius:16px;
+  padding:14px; box-shadow:0 16px 40px rgba(12,16,39,.12);
 }
-.kpi-title{ font-weight:900; color:#0f172a; margin-bottom:6px; }
-.kpi-sub{ color:#6b7280; font-size:12px; margin-top:-6px; margin-bottom:10px; }
+.kpi-title{ font-weight:900; color:#0f172a; margin:0 0 8px }
+.kpi-pair{ display:flex; align-items:baseline; justify-content:center; gap:16px }
+.kpi-num{ font-size:36px; font-weight:900; color:#0f172a; font-variant-numeric: tabular-nums; }
+.kpi-sep{ width:1px; height:22px; background:#e6e8ee }
 
-/* מפריד אנכי קטן בין שני ערכים בקוביה */
-.sep{
-  display:inline-block; width:1px; height:22px; background:#e6e8ee; margin:0 12px; vertical-align:middle;
+/* הילה לפי מצב (דלתא) – בלי טקסט פנימי */
+.card-up{ box-shadow:0 18px 46px rgba(16,185,129,.22); }
+.card-down{ box-shadow:0 18px 46px rgba(239,68,68,.22); }
+
+/* מובייל */
+@media (max-width:480px){
+  .kpi-num{ font-size:40px }
+  .main .block-container{ padding-left:12px; padding-right:12px; }
 }
 </style>
 """,
@@ -194,7 +200,7 @@ def insert_record(branch: str, chef: str, dish: str, score: int, notes: str = ""
         st.warning(f"נשמר מקומית, אך לא לגיליון: {e}")
 
 def save_to_google_sheets(branch: str, chef: str, dish: str, score: int, notes: str, timestamp: str):
-    """שמירה ב-Google Sheets (אם הוגדר)."""
+    """שמירה ב-Google Sheets (אם הגדרות קיימות)."""
     if not GSHEETS_AVAILABLE:
         return
     sheet_url = st.secrets.get("GOOGLE_SHEET_URL", "") or os.getenv("GOOGLE_SHEET_URL", "")
@@ -209,9 +215,7 @@ def save_to_google_sheets(branch: str, chef: str, dish: str, score: int, notes: 
     if not (sheet_url and creds):
         return
     try:
-        credentials = Credentials.from_service_account_info(creds).with_scopes(
-            ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-        )
+        credentials = Credentials.from_service_account_info(creds).with_scopes(SCOPES)
         gc = gspread.authorize(credentials)
         sheet = gc.open_by_url(sheet_url).sheet1
         sheet.append_row([timestamp, branch, chef, dish, score, notes or ""])
@@ -249,10 +253,48 @@ def top_chef_network(df: pd.DataFrame, min_n: int = MIN_CHEF_TOP_M) -> Tuple[Opt
     pick = qual.iloc[0] if not qual.empty else g.iloc[0]
     return str(pick["chef_name"]), float(pick["avg"]), int(pick["n"])
 
+# קומפוננטת KPI (מספרים בלבד)
+def _format_num(v: Optional[float], decimals: int = 2) -> str:
+    if v is None:
+        return "—"
+    try:
+        if isinstance(v, (int,)) or (isinstance(v, float) and abs(v - int(v)) < 1e-9):
+            return f"{int(v)}"
+        return f"{float(v):.{decimals}f}"
+    except Exception:
+        return "—"
+
+def render_kpi_pair(title: str, left_value: Optional[float], right_value: Optional[float], decimals: int = 2):
+    """
+    מציג קופסת KPI: שני מספרים גדולים (שמאל|ימין) עם הילה ירוקה/אדומה לפי דלתא.
+    אין טקסט בתוך הקופסה – רק המספרים.
+    """
+    # דלתא (ימין-שמאל)
+    cls = ""
+    if left_value is not None and right_value is not None:
+        delta = right_value - left_value
+        if delta > 0.001: cls = "card-up"
+        elif delta < -0.001: cls = "card-down"
+
+    st.markdown(f'<div class="kpi-title">{title}</div>', unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <div class="kpi-card {cls}">
+          <div class="kpi-pair">
+            <div class="kpi-num">{_format_num(left_value, decimals)}</div>
+            <div class="kpi-sep"></div>
+            <div class="kpi-num">{_format_num(right_value, decimals)}</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
 # =========================
 # ------ LOGIN & CONTEXT --
 # =========================
 def require_auth() -> dict:
+    """מסך כניסה פשוט: סניף או מטה (ללא סיסמה)."""
     if "auth" not in st.session_state:
         st.session_state.auth = {"role": None, "branch": None}
     auth = st.session_state.auth
@@ -260,6 +302,7 @@ def require_auth() -> dict:
     if not auth["role"]:
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.subheader("👋 מסך כניסה")
+
         role = st.radio("בחר סוג משתמש", options=["סניף", "מטה"], horizontal=True, index=0)
 
         if role == "סניף":
@@ -270,7 +313,7 @@ def require_auth() -> dict:
                 else:
                     st.session_state.auth = {"role": "branch", "branch": branch_choice}
                     st.rerun()
-        else:
+        else:  # מטה – ללא סיסמה
             if st.button("המשך כ'מטה'"):
                 st.session_state.auth = {"role": "meta", "branch": None}
                 st.rerun()
@@ -300,47 +343,50 @@ st.markdown(
 st.markdown('<div class="card">', unsafe_allow_html=True)
 st.subheader("✍️ הזנת בדיקת איכות חדשה")
 
-colA, colB, colC = st.columns([1,1,1])
+with st.form("quality_form", clear_on_submit=False):
+    colA, colB, colC = st.columns([1,1,1])
 
-# בסביבת מטה בוחרים סניף, בסניף פשוט מוצג ערך
-if auth["role"] == "meta":
-    with colA:
-        selected_branch = st.selectbox("סניף *", options=BRANCHES, index=0)
-else:
-    selected_branch = auth["branch"]
-    with colA:
-        st.text_input("סניף", value=selected_branch, disabled=True)
+    if auth["role"] == "meta":
+        with colA:
+            selected_branch = st.selectbox("סניף *", options=BRANCHES, index=0)
+    else:
+        selected_branch = auth["branch"]
+        with colA:
+            st.text_input("סניף", value=selected_branch, disabled=True)
 
-# שם הטבח — בלי placeholder
-with colB:
-    chef = st.text_input("שם הטבח *", placeholder="")
+    # שם הטבח — ללא placeholder
+    with colB:
+        chef = st.text_input("שם הטבח *")
 
-with colC:
-    dish = st.selectbox("שם המנה *", options=DISHES, index=0)
+    with colC:
+        dish = st.selectbox("שם המנה *", options=DISHES, index=0)
 
-colD, colE = st.columns([1,1])
-with colD:
-    score = st.selectbox("ציון איכות *", options=list(range(1, 11)), index=7,
-                         format_func=lambda x: f"{x} - {score_hint(x)}")
-with colE:
-    notes = st.text_area("הערות (לא חובה)", placeholder="")  # אפשר גם בלי placeholder; השארתי ריק
+    colD, colE = st.columns([1,1])
+    with colD:
+        score = st.selectbox(
+            "ציון איכות *",
+            options=list(range(1, 11)),
+            index=7,
+            format_func=lambda x: f"{x} - {score_hint(x)}"
+        )
+    with colE:
+        notes = st.text_area("הערות (לא חובה)")
 
-save_col1, _ = st.columns([1,3])
-with save_col1:
-    save = st.button("💾 שמור בדיקה", type="primary")
+    submitted = st.form_submit_button("💾 שמור בדיקה")
 
-if save:
+if submitted:
     if not selected_branch or not chef.strip() or not dish:
         st.error("חובה לבחור/להציג סניף, להזין שם טבח ולבחור מנה.")
     else:
         insert_record(selected_branch, chef, dish, score, notes, submitted_by=auth["role"])
         st.success(f"✅ נשמר: **{selected_branch} · {chef} · {dish}** • ציון **{score}**")
         refresh_df()
+        st.balloons()
 
 st.markdown('</div>', unsafe_allow_html=True)
 
 # =========================
-# --------- KPIs ----------
+# --------- KPI'S ---------
 # =========================
 df = load_df()
 st.markdown('<div class="card">', unsafe_allow_html=True)
@@ -349,40 +395,46 @@ st.subheader("📊 מדדי KPI (מספרים בלבד)")
 if df.empty:
     st.info("אין נתונים להצגה עדיין.")
 else:
+    # ממוצעים לרשת/סניף
     net_avg = network_avg(df)
     br_avg = branch_avg(df, selected_branch) if selected_branch else None
+
+    # ממוצע מנה לרשת/סניף
     net_dish_avg = dish_avg_network(df, dish) if dish else None
     br_dish_avg = dish_avg_branch(df, selected_branch, dish) if (selected_branch and dish) else None
+
+    # טבח מצטיין ברשת
     chef_name, chef_avg, chef_n = top_chef_network(df, MIN_CHEF_TOP_M)
 
-    # KPI 1 — ממוצע רשת | סניף
-    k1c1, k1c2, k1c3 = st.columns([1,2,1])
-    with k1c2:
-        st.markdown('<div class="kpi-title">ממוצע ציון — רשת | סניף</div>', unsafe_allow_html=True)
-        st.markdown(
-            f'<div class="kpi">{(f"{net_avg:.2f}" if net_avg is not None else "—")}<span class="sep"></span>{(f"{br_avg:.2f}" if br_avg is not None else "—")}</div>',
-            unsafe_allow_html=True
-        )
+    # KPI 1 — ממוצע ציון: רשת | סניף
+    render_kpi_pair(
+        title=f"ממוצע ציון — רשת | סניף {selected_branch or ''}".strip(),
+        left_value=net_avg,
+        right_value=br_avg,
+        decimals=2
+    )
+
+    st.markdown("<br>", unsafe_allow_html=True)
 
     # KPI 2 — ממוצע ציון למנה: רשת | סניף
-    if dish:
-        k2c1, k2c2, k2c3 = st.columns([1,2,1])
-        with k2c2:
-            st.markdown(f'<div class="kpi-title">ממוצע ציון למנה "{dish}" — רשת | סניף</div>', unsafe_allow_html=True)
-            st.markdown(
-                f'<div class="kpi">{(f"{net_dish_avg:.2f}" if net_dish_avg is not None else "—")}<span class="sep"></span>{(f"{br_dish_avg:.2f}" if br_dish_avg is not None else "—")}</div>',
-                unsafe_allow_html=True
-            )
+    render_kpi_pair(
+        title=f"ממוצע ציון למנה \"{dish}\" — רשת | סניף {selected_branch or ''}".strip(),
+        left_value=net_dish_avg,
+        right_value=br_dish_avg,
+        decimals=2
+    )
 
-    # KPI 3 — הטבח המצטיין ברשת (שם למעלה; בקוביה: ממוצע | N)
-    k3c1, k3c2, k3c3 = st.columns([1,2,1])
-    with k3c2:
-        title = "הטבח המצטיין ברשת" + (f" — {chef_name}" if chef_name else "")
-        st.markdown(f'<div class="kpi-title">{title}</div>', unsafe_allow_html=True)
-        st.markdown(
-            f'<div class="kpi">{(f"{chef_avg:.2f}" if chef_avg is not None else "—")}<span class="sep"></span>{(chef_n if chef_n else "—")}</div>',
-            unsafe_allow_html=True
-        )
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # KPI 3 — הטבח המצטיין ברשת (שם מעל; בקופסה: ממוצע | N)
+    title = "הטבח המצטיין ברשת" + (f" — {chef_name}" if chef_name else "")
+    # ממוצע | N (N יוצג כמספר שלם)
+    render_kpi_pair(
+        title=title,
+        left_value=chef_avg,
+        right_value=int(chef_n) if chef_n else None,
+        decimals=2
+    )
 
 st.markdown('</div>', unsafe_allow_html=True)
 
