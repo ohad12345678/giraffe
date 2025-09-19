@@ -1,5 +1,5 @@
 # app2.py — ג'ירף מטבחים · איכויות אוכל
-# דרישות: streamlit, pandas, python-dotenv
+# דרישות: streamlit, pandas, python-dotenv, altair
 # אופציונלי: gspread, google-auth, openai (לניתוח GPT)
 # הרצה: streamlit run app2.py
 
@@ -11,7 +11,7 @@ from typing import List, Optional, Tuple
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
-import altair as alt  # גרפי עמודות עם תמיכה מצוינת ב-RTL
+import altair as alt  # גרפי עמודות עם תמיכה טובה בעברית/RTL
 
 # ===== Optional Google Sheets =====
 try:
@@ -85,7 +85,7 @@ html, body, .main, .block-container, .sidebar .sidebar-content{direction:rtl;}
 .stSelectbox div[data-baseweb="select"]{background:#fff !important; color:var(--text) !important;
   border-radius:12px !important; border:1px solid var(--border) !important;}
 .stTextInput label, .stTextArea label, .stSelectbox label{color:var(--text) !important; font-weight:800 !important;}
-.stTextInput input:focus, .stTextArea textarea:focus, .stSelectbox [data-baseweb="select"]:focus-within{
+.stTextInput input:focus, .stTextArea textarea:focus, .stSelectbox [data-baseweb="select"]:focus-withין{
   outline:none !important; box-shadow:0 0 0 2px rgba(14,165,164,.18) !important; border-color:var(--primary) !important;}
 
 /* כפתור ראשי */
@@ -159,9 +159,61 @@ def load_df() -> pd.DataFrame:
     c.close()
     return df
 
+def save_to_google_sheets(branch: str, chef: str, dish: str, score: int, notes: str, timestamp: str) -> tuple[bool, Optional[str]]:
+    """
+    שמירה ל-Google Sheets (אם מוקצה). מחזירה (ok, err). כוללת ניסיון שני עם שינוי project_id
+    במקרה שהוגדר כ- 'giraffe-472505' (כמו בדוגמה שעבדה לך בעבר).
+    """
+    if not GSHEETS_AVAILABLE:
+        return False, "gspread לא מותקן"
+
+    sheet_url = st.secrets.get("GOOGLE_SHEET_URL", "") or os.getenv("GOOGLE_SHEET_URL", "")
+    google_creds = st.secrets.get("google_service_account", {})
+    if not google_creds:
+        env_json = os.getenv("GOOGLE_SERVICE_ACCOUNT", "")
+        if env_json:
+            try:
+                google_creds = json.loads(env_json)
+            except Exception as e:
+                return False, f"שגיאה בפענוח GOOGLE_SERVICE_ACCOUNT: {e}"
+
+    if not sheet_url:
+        return False, "GOOGLE_SHEET_URL חסר"
+    if not google_creds:
+        return False, "google_service_account חסר"
+
+    errors: List[str] = []
+    candidates = [google_creds]
+
+    # ניסיון נוסף עם project_id מותאם (אם רלוונטי)
+    pid = str(google_creds.get("project_id", "")).strip()
+    if pid in ("giraffe-472505", "גירף-472505", "ג'ירף-472505"):
+        creds2 = google_creds.copy()
+        creds2["project_id"] = "giraffe"
+        candidates.append(creds2)
+
+    for creds_try in candidates:
+        try:
+            credentials = Credentials.from_service_account_info(creds_try).with_scopes(SCOPES)
+            gc = gspread.authorize(credentials)
+            sh = gc.open_by_url(sheet_url)
+            try:
+                ws = sh.sheet1
+            except Exception:
+                ws_list = sh.worksheets()
+                ws = ws_list[0] if ws_list else sh.add_worksheet(title="Sheet1", rows=1, cols=6)
+            ws.append_row([timestamp, branch, chef, dish, score, notes or ""], value_input_option="USER_ENTERED")
+            return True, None
+        except Exception as e:
+            errors.append(str(e))
+
+    return False, " | ".join(errors) if errors else "שגיאה לא ידועה"
+
 def insert_record(branch: str, chef: str, dish: str, score: int, notes: str = "", submitted_by: Optional[str] = None):
     """שומר ל-SQLite ול-Google Sheets (אם קיים). אין בדיקת כפילויות."""
     timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+    # SQLite
     c = conn()
     cur = c.cursor()
     cur.execute(
@@ -170,33 +222,11 @@ def insert_record(branch: str, chef: str, dish: str, score: int, notes: str = ""
     )
     c.commit()
     c.close()
-    try:
-        save_to_google_sheets(branch, chef, dish, score, notes, timestamp)
-    except Exception as e:
-        st.warning(f"נשמר מקומית, אך לא לגיליון: {e}")
 
-def save_to_google_sheets(branch: str, chef: str, dish: str, score: int, notes: str, timestamp: str):
-    """שמירה ל-Google Sheets (אם הגדרות קיימות)."""
-    if not GSHEETS_AVAILABLE:
-        return
-    sheet_url = st.secrets.get("GOOGLE_SHEET_URL", "") or os.getenv("GOOGLE_SHEET_URL", "")
-    creds = st.secrets.get("google_service_account", {})
-    if not creds:
-        env_json = os.getenv("GOOGLE_SERVICE_ACCOUNT", "")
-        if env_json:
-            try:
-                creds = json.loads(env_json)
-            except Exception:
-                pass
-    if not (sheet_url and creds):
-        return
-    try:
-        credentials = Credentials.from_service_account_info(creds).with_scopes(SCOPES)
-        gc = gspread.authorize(credentials)
-        sheet = gc.open_by_url(sheet_url).sheet1
-        sheet.append_row([timestamp, branch, chef, dish, score, notes or ""])
-    except Exception as e:
-        st.warning(f"Google Sheets: {e}")
+    # Google Sheets
+    ok, err = save_to_google_sheets(branch, chef, dish, score, notes, timestamp)
+    if not ok and err:
+        st.warning(f"נשמר מקומית, אבל לא נכתב ל-Google Sheets: {err}")
 
 def refresh_df():
     load_df.clear()
@@ -394,9 +424,12 @@ else:
     if chef_name:
         title += f" — {chef_name} · {chef_branch or ''}".strip()
     st.markdown(f'<div class="kpi-title">{title}</div>', unsafe_allow_html=True)
-    st.markdown('<div class="kpi-min"><div class="kpi-single-num">{}</div></div>'.format(
-        "—" if chef_avg is None else f"{chef_avg:.2f}"
-    ), unsafe_allow_html=True)
+    st.markdown(
+        '<div class="kpi-min"><div class="kpi-single-num">{}</div></div>'.format(
+            "—" if chef_avg is None else f"{chef_avg:.2f}"
+        ),
+        unsafe_allow_html=True,
+    )
 
 st.markdown('</div>', unsafe_allow_html=True)
 
@@ -551,17 +584,14 @@ if st.session_state.get("admin_logged_in", False):
     else:
         st.error("Google Sheets לא מוגדר")
 
-    with st.expander("מידע טכני"):
-        for info in debug_info:
-            st.text(info)
-        with st.expander("הוראות הגדרה"):
-            st.markdown("""
-            1) צור/פתח Google Sheet  
-            2) צור Service Account ב-Google Cloud והורד JSON  
-            3) הוסף ל-Secrets/.env:  
-               - GOOGLE_SHEET_URL=...  
-               - GOOGLE_SERVICE_ACCOUNT='{"type":"service_account",...}'  
-            4) שתף את הגיליון עם ה-client_email בהרשאת Editor
-            """)
+    with st.expander("הוראות הגדרה"):
+        st.markdown("""
+        1) צור/פתח Google Sheet  
+        2) צור Service Account ב-Google Cloud והורד JSON  
+        3) הוסף ל-Secrets/.env:  
+           - GOOGLE_SHEET_URL=...  
+           - google_service_account = תוכן ה-JSON (או GOOGLE_SERVICE_ACCOUNT='{"type":"service_account",...}')  
+        4) שתף את הגיליון עם ה-client_email בהרשאת Editor
+        """)
 
     st.markdown('</div>', unsafe_allow_html=True)
