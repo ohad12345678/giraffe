@@ -1,6 +1,6 @@
-# app2.py — ג'ירף מטבחים · איכויות אוכל (מינימלי + KPI גרפיים + GPT)
-# דרישות: streamlit, pandas, python-dotenv, matplotlib
-# אופציונלי: gspread, google-auth
+# app2.py — ג'ירף מטבחים · איכויות אוכל
+# דרישות: streamlit, pandas, python-dotenv
+# אופציונלי: gspread, google-auth, openai (לניתוח GPT)
 # הרצה: streamlit run app2.py
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from typing import List, Optional, Tuple
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
-import matplotlib.pyplot as plt
+import altair as alt  # גרפי עמודות עם תמיכה מצוינת ב-RTL
 
 # ===== Optional Google Sheets =====
 try:
@@ -67,13 +67,13 @@ html, body, .main, .block-container, .sidebar .sidebar-content{direction:rtl;}
   box-shadow:0 6px 22px rgba(13,107,98,.08); margin-bottom:14px;
 }
 .header-min .title{font-size:26px; font-weight:900; color:var(--mint-700); margin:0;}
-.header-min .sub{display:none;} /* לא מציגים טקסט משנה */
+.header-min .sub{display:none;}
 
 /* כרטיס סטנדרטי */
 .card{background:var(--surface); border:1px solid var(--border); border-radius:16px;
   padding:16px; box-shadow:0 4px 18px rgba(10,20,40,.04); margin-bottom:12px;}
 
-/* Status bar מינימלי */
+/* Status bar */
 .status-min{display:flex; align-items:center; gap:10px; background:#fff;
   border:1px solid var(--border); border-radius:14px; padding:10px 12px;}
 .chip{padding:4px 10px; border:1px solid var(--mint-100); border-radius:999px;
@@ -95,7 +95,7 @@ html, body, .main, .block-container, .sidebar .sidebar-content{direction:rtl;}
   box-shadow:0 4px 16px rgba(14,165,164,.25) !important;}
 .stButton>button:hover{filter:saturate(1.05) brightness(1.02);}
 
-/* הסתרת “Press Enter to submit/apply” */
+/* הסתרת “Press Enter to apply” */
 div[data-testid="stWidgetInstructions"]{display:none !important;}
 
 /* KPI לטבח מצטיין — מספר יחיד */
@@ -143,6 +143,7 @@ def init_db():
         cur.execute(q)
     c.commit()
     c.close()
+
 init_db()
 
 # =========================
@@ -159,7 +160,7 @@ def load_df() -> pd.DataFrame:
     return df
 
 def insert_record(branch: str, chef: str, dish: str, score: int, notes: str = "", submitted_by: Optional[str] = None):
-    """שומר ל-SQLite ול-Google Sheets (אם קיים)."""
+    """שומר ל-SQLite ול-Google Sheets (אם קיים). אין בדיקת כפילויות."""
     timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     c = conn()
     cur = c.cursor()
@@ -175,6 +176,7 @@ def insert_record(branch: str, chef: str, dish: str, score: int, notes: str = ""
         st.warning(f"נשמר מקומית, אך לא לגיליון: {e}")
 
 def save_to_google_sheets(branch: str, chef: str, dish: str, score: int, notes: str, timestamp: str):
+    """שמירה ל-Google Sheets (אם הגדרות קיימות)."""
     if not GSHEETS_AVAILABLE:
         return
     sheet_url = st.secrets.get("GOOGLE_SHEET_URL", "") or os.getenv("GOOGLE_SHEET_URL", "")
@@ -189,7 +191,7 @@ def save_to_google_sheets(branch: str, chef: str, dish: str, score: int, notes: 
     if not (sheet_url and creds):
         return
     try:
-        credentials = Credentials.from_service_account_info(creds)
+        credentials = Credentials.from_service_account_info(creds).with_scopes(SCOPES)
         gc = gspread.authorize(credentials)
         sheet = gc.open_by_url(sheet_url).sheet1
         sheet.append_row([timestamp, branch, chef, dish, score, notes or ""])
@@ -322,20 +324,32 @@ df = load_df()
 st.markdown('<div class="card">', unsafe_allow_html=True)
 
 def bar_compare(title: str, labels: list[str], values: list[float], colors: list[str]):
-    """גרף עמודות קטן ונקי להשוואה בין שני ערכים."""
-    fig, ax = plt.subplots(figsize=(4.8, 3.0), dpi=160)
-    bars = ax.bar(labels, values, color=colors, width=0.55)
-    for b in bars:
-        height = b.get_height()
-        ax.text(b.get_x() + b.get_width()/2, height + 0.05, f"{height:.2f}",
-                ha="center", va="bottom", fontsize=9)
-    ax.set_ylim(0, max(values) * 1.25 if values and max(values) > 0 else 1)
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.grid(axis='y', linestyle=':', alpha=0.35)
-    ax.set_ylabel("") ; ax.set_xlabel("")
+    """גרף עמודות RTL ב-Altair: כותרות בעברית יוצגו נכון."""
+    df_chart = pd.DataFrame({"קטגוריה": labels, "ערך": values})
+    ymax = max(values) * 1.25 if values and max(values) > 0 else 1
+
+    base = (
+        alt.Chart(df_chart)
+        .encode(
+            x=alt.X("קטגוריה:N", sort=labels, axis=alt.Axis(labelAngle=0, title=None)),
+            y=alt.Y("ערך:Q", scale=alt.Scale(domain=(0, ymax)), axis=alt.Axis(title=None)),
+        )
+    )
+
+    bars = base.mark_bar(size=56).encode(
+        color=alt.Color(
+            "קטגוריה:N",
+            scale=alt.Scale(domain=labels, range=colors),
+            legend=None,
+        )
+    )
+
+    text = base.mark_text(dy=-8, fontWeight="bold").encode(
+        text=alt.Text("ערך:Q", format=".2f")
+    )
+
     st.markdown(f"**{title}**")
-    st.pyplot(fig, clear_figure=True)
+    st.altair_chart(bars + text, use_container_width=True)
 
 if df.empty:
     st.info("אין נתונים להצגה עדיין.")
@@ -348,7 +362,7 @@ else:
     net_dish_avg = dish_avg_network(df, dish) if dish else None
     br_dish_avg = dish_avg_branch(df, selected_branch, dish) if (selected_branch and dish) else None
 
-    # 1) גרף השוואה — ממוצע ציון רשת מול הסניף
+    # 1) השוואה — ממוצע ציון רשת מול הסניף
     if net_avg is not None and br_avg is not None:
         bar_compare(
             title=f"ממוצע ציון — השוואה רשת מול {selected_branch}",
@@ -361,7 +375,7 @@ else:
 
     st.markdown("<hr style='border:none;border-top:1px solid #e6e8ef;margin:14px 0'/>", unsafe_allow_html=True)
 
-    # 2) גרף השוואה — ממוצע ציון למנה (רשת מול הסניף)
+    # 2) השוואה — ממוצע ציון למנה (רשת מול הסניף)
     if net_dish_avg is not None and br_dish_avg is not None:
         bar_compare(
             title=f"ממוצע ציון למנה \"{dish}\" — רשת מול {selected_branch}",
@@ -470,7 +484,7 @@ st.markdown('<div class="card">', unsafe_allow_html=True)
 if "admin_logged_in" not in st.session_state:
     st.session_state.admin_logged_in = False
 
-# התנתקות משתמש
+# התנתקות משתמש (לבחירת סניף/מצב מחדש)
 c1, c2 = st.columns([4,1])
 with c1:
     st.caption("לחזרה למסך כניסה: התנתק משתמש.")
