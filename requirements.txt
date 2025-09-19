@@ -1,6 +1,10 @@
-   streamlit
-   pandas
-   python-dotenv
-   openai
-   gspread
-   google-auth
+streamlit
+pandas
+python-dotenv
+openai
+gspread
+google-auth
+matplotlib
+
+
+
