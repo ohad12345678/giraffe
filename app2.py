@@ -30,7 +30,7 @@ load_dotenv()
 # סניפים (כולל סביון)
 BRANCHES: List[str] = ["חיפה", "ראשל״צ", "רמה״ח", "נס ציונה", "לנדמרק", "פתח תקווה", "הרצליה", "סביון"]
 
-# מנות
+# מנות (דוגמה ראשונית—ניתן להרחיב)
 DISHES: List[str] = [
     "פאד תאי", "מלאזית", "פיליפינית", "אפגנית",
     "קארי דלעת", "סצ'ואן", "ביף רייס",
@@ -85,7 +85,7 @@ html, body, .main, .block-container, .sidebar .sidebar-content{direction:rtl;}
 .stSelectbox div[data-baseweb="select"]{background:#fff !important; color:var(--text) !important;
   border-radius:12px !important; border:1px solid var(--border) !important;}
 .stTextInput label, .stTextArea label, .stSelectbox label{color:var(--text) !important; font-weight:800 !important;}
-.stTextInput input:focus, .stTextArea textarea:focus, .stSelectbox [data-baseweb="select"]:focus-withין{
+.stTextInput input:focus, .stTextArea textarea:focus, .stSelectbox [data-baseweb="select"]:focus-within{
   outline:none !important; box-shadow:0 0 0 2px rgba(14,165,164,.18) !important; border-color:var(--primary) !important;}
 
 /* כפתור ראשי */
@@ -159,53 +159,70 @@ def load_df() -> pd.DataFrame:
     c.close()
     return df
 
+def _gs_get_creds_and_target():
+    """מאחד טעינת קרדנצ'יאלס והיעד (URL או Title) מה-Secrets/.env."""
+    sheet_target = st.secrets.get("GOOGLE_SHEET_URL", "") or os.getenv("GOOGLE_SHEET_URL", "")
+    creds = st.secrets.get("google_service_account", {})
+    if not creds:
+        env_json = os.getenv("GOOGLE_SERVICE_ACCOUNT", "")
+        if env_json:
+            try:
+                creds = json.loads(env_json)
+            except Exception:
+                pass
+    return creds, sheet_target
+
+def _gs_open_spreadsheet(gc, sheet_target: str):
+    """
+    פותח Spreadsheet לפי URL או שם:
+    - אם sheet_target מתחיל ב-http → open_by_url
+    - אחרת → open (לפי שם הגיליון)
+    """
+    if not sheet_target:
+        raise ValueError("GOOGLE_SHEET_URL חסר (יכול להכיל גם שם גיליון).")
+    if sheet_target.strip().lower().startswith(("http://", "https://")):
+        return gc.open_by_url(sheet_target)
+    return gc.open(sheet_target)
+
 def save_to_google_sheets(branch: str, chef: str, dish: str, score: int, notes: str, timestamp: str) -> tuple[bool, Optional[str]]:
     """
-    שמירה ל-Google Sheets (אם מוקצה). מחזירה (ok, err). כוללת ניסיון שני עם שינוי project_id
-    במקרה שהוגדר כ- 'giraffe-472505' (כמו בדוגמה שעבדה לך בעבר).
+    שמירה ל-Google Sheets. תומך גם ב-URL וגם בשם גיליון באותו secret (GOOGLE_SHEET_URL).
+    מחזיר (ok, error). כולל ניסיון נוסף אם project_id בעייתי.
     """
     if not GSHEETS_AVAILABLE:
         return False, "gspread לא מותקן"
 
-    sheet_url = st.secrets.get("GOOGLE_SHEET_URL", "") or os.getenv("GOOGLE_SHEET_URL", "")
-    google_creds = st.secrets.get("google_service_account", {})
-    if not google_creds:
-        env_json = os.getenv("GOOGLE_SERVICE_ACCOUNT", "")
-        if env_json:
-            try:
-                google_creds = json.loads(env_json)
-            except Exception as e:
-                return False, f"שגיאה בפענוח GOOGLE_SERVICE_ACCOUNT: {e}"
-
-    if not sheet_url:
-        return False, "GOOGLE_SHEET_URL חסר"
-    if not google_creds:
+    creds, sheet_target = _gs_get_creds_and_target()
+    if not creds:
         return False, "google_service_account חסר"
+    if not sheet_target:
+        return False, "GOOGLE_SHEET_URL חסר (אפשר לשים בו גם שם גיליון)"
 
     errors: List[str] = []
-    candidates = [google_creds]
+    # ניסיון רגיל
+    try:
+        credentials = Credentials.from_service_account_info(creds).with_scopes(SCOPES)
+        gc = gspread.authorize(credentials)
+        sh = _gs_open_spreadsheet(gc, sheet_target)
+        ws = getattr(sh, "sheet1", sh.worksheets()[0])
+        ws.append_row([timestamp, branch, chef, dish, score, notes or ""], value_input_option="USER_ENTERED")
+        return True, None
+    except Exception as e:
+        errors.append(str(e))
 
-    # ניסיון נוסף עם project_id מותאם (אם רלוונטי)
-    pid = str(google_creds.get("project_id", "")).strip()
-    if pid in ("giraffe-472505", "גירף-472505", "ג'ירף-472505"):
-        creds2 = google_creds.copy()
-        creds2["project_id"] = "giraffe"
-        candidates.append(creds2)
-
-    for creds_try in candidates:
-        try:
-            credentials = Credentials.from_service_account_info(creds_try).with_scopes(SCOPES)
+    # ניסיון נוסף — תיקון project_id נפוץ
+    try:
+        creds2 = creds.copy()
+        if str(creds2.get("project_id", "")).strip() in ("giraffe-472505", "גירף-472505", "ג'ירף-472505"):
+            creds2["project_id"] = "giraffe"
+            credentials = Credentials.from_service_account_info(creds2).with_scopes(SCOPES)
             gc = gspread.authorize(credentials)
-            sh = gc.open_by_url(sheet_url)
-            try:
-                ws = sh.sheet1
-            except Exception:
-                ws_list = sh.worksheets()
-                ws = ws_list[0] if ws_list else sh.add_worksheet(title="Sheet1", rows=1, cols=6)
+            sh = _gs_open_spreadsheet(gc, sheet_target)
+            ws = getattr(sh, "sheet1", sh.worksheets()[0])
             ws.append_row([timestamp, branch, chef, dish, score, notes or ""], value_input_option="USER_ENTERED")
             return True, None
-        except Exception as e:
-            errors.append(str(e))
+    except Exception as e:
+        errors.append(str(e))
 
     return False, " | ".join(errors) if errors else "שגיאה לא ידועה"
 
@@ -549,7 +566,7 @@ else:
 
 st.markdown('</div>', unsafe_allow_html=True)
 
-# אזור מנהל — ייצוא ובדיקות
+# אזור מנהל — ייצוא ומידע
 if st.session_state.get("admin_logged_in", False):
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.write("ייצוא ומידע")
@@ -558,40 +575,23 @@ if st.session_state.get("admin_logged_in", False):
     csv_bytes = df_all.to_csv(index=False).encode("utf-8")
     st.download_button("הורדת CSV", data=csv_bytes, file_name="food_quality_export.csv", mime="text/csv")
 
-    debug_info = []
-    try:
-        sheet_url = st.secrets.get("GOOGLE_SHEET_URL", "") or os.getenv("GOOGLE_SHEET_URL", "")
-        creds_present = bool(st.secrets.get("google_service_account", {})) or bool(os.getenv("GOOGLE_SERVICE_ACCOUNT", ""))
-        debug_info.append(f"gspread זמין: {GSHEETS_AVAILABLE}")
-        debug_info.append(f"google_service_account קיים: {creds_present}")
-        debug_info.append(f"GOOGLE_SHEET_URL קיים: {bool(sheet_url)}")
-        if creds_present:
-            try:
-                creds = st.secrets.get("google_service_account", {})
-                if not creds:
-                    creds = json.loads(os.getenv("GOOGLE_SERVICE_ACCOUNT"))
-                debug_info.append(f"client_email: {creds.get('client_email','חסר')}")
-            except Exception as e:
-                debug_info.append(f"שגיאה בקריאת JSON: {e}")
-        sheets_ok = bool(GSHEETS_AVAILABLE and creds_present and sheet_url)
-    except Exception as e:
-        debug_info.append(f"שגיאת קונפיג: {e}")
-        sheets_ok = False
+    # מידע טכני + בדיקת חיבור/כתיבה
+    gspread_ok = GSHEETS_AVAILABLE
+    creds_present = bool(st.secrets.get("google_service_account", {})) or bool(os.getenv("GOOGLE_SERVICE_ACCOUNT", ""))
+    sheet_target = st.secrets.get("GOOGLE_SHEET_URL", "") or os.getenv("GOOGLE_SHEET_URL", "")
 
-    if sheets_ok:
-        st.success("Google Sheets מחובר")
-        st.markdown(f'<a href="{sheet_url}" target="_blank">פתח Google Sheet</a>', unsafe_allow_html=True)
-    else:
-        st.error("Google Sheets לא מוגדר")
+    with st.expander("מידע טכני"):
+        st.text(f"gspread זמין: {gspread_ok}")
+        st.text(f"google_service_account קיים: {creds_present}")
+        st.text(f"יעד (URL או שם גיליון): {'קיים' if sheet_target else 'חסר'}")
 
-    with st.expander("הוראות הגדרה"):
-        st.markdown("""
-        1) צור/פתח Google Sheet  
-        2) צור Service Account ב-Google Cloud והורד JSON  
-        3) הוסף ל-Secrets/.env:  
-           - GOOGLE_SHEET_URL=...  
-           - google_service_account = תוכן ה-JSON (או GOOGLE_SERVICE_ACCOUNT='{"type":"service_account",...}')  
-        4) שתף את הגיליון עם ה-client_email בהרשאת Editor
-        """)
+    with st.expander("בדיקת חיבור Google Sheets"):
+        st.caption(f"יעד: {sheet_target or '—'}")
+        if st.button("🔗 בדיקת כתיבה (TEST)"):
+            ok, err = save_to_google_sheets("TEST", "BOT", "בדיקה", 0, "ping", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
+            if ok:
+                st.success("✅ חיבור תקין — נכתבה שורת TEST לגיליון.")
+            else:
+                st.error(f"❌ נכשל: {err}")
 
     st.markdown('</div>', unsafe_allow_html=True)
