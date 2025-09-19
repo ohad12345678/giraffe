@@ -1,4 +1,4 @@
-# app2.py — 🍜 ג'ירף מטבחים – איכויות אוכל
+# app2.py — ג'ירף מטבחים · איכויות אוכל (גרסה מינימלית)
 # דרישות: streamlit, pandas, python-dotenv
 # אופציונלי: gspread, google-auth
 # הרצה: streamlit run app2.py
@@ -23,10 +23,10 @@ except Exception:
 # =========================
 # ------- SETTINGS --------
 # =========================
-st.set_page_config(page_title="🍜 ג'ירף מטבחים – איכויות אוכל", layout="wide")
+st.set_page_config(page_title="ג'ירף מטבחים – איכויות אוכל", layout="wide")
 load_dotenv()
 
-# סניפים (נוספה "סביון")
+# סניפים (כולל סביון)
 BRANCHES: List[str] = ["חיפה", "ראשל״צ", "רמה״ח", "נס ציונה", "לנדמרק", "פתח תקווה", "הרצליה", "סביון"]
 
 # מנות
@@ -38,104 +38,78 @@ DISHES: List[str] = [
 ]
 
 DB_PATH = "food_quality.db"
-MIN_CHEF_TOP_M = 5  # מינימום בדיקות לטבח מצטיין
+MIN_CHEF_TOP_M = 5
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 
 # =========================
 # ---------- STYLE --------
 # =========================
-st.markdown(
-    """
+st.markdown("""
 <style>
-/* רקע כללי - סגול עמוק */
-html, body, .main { background:#2f1c46; }
-html, body, .main, .block-container, .sidebar .sidebar-content { direction: rtl; }
-.main .block-container{ font-family:"Rubik", -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+:root{
+  --bg:#f7f8fa; --surface:#ffffff; --text:#0f172a; --muted:#6b7280;
+  --border:#e6e8ef; --primary:#0ea5a4; --primary-weak:#d1fae5;
+}
+html,body,.main{background:var(--bg);}
+html, body, .main, .block-container, .sidebar .sidebar-content{direction:rtl;}
+.main .block-container{font-family:"Rubik",-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;}
 
-/* Header */
-.header-wrap{
-  position:relative; overflow:hidden;
-  background:linear-gradient(135deg,#3b2460 0%, #4a2b77 60%, #36205a 100%);
-  color:#fff; padding:26px 22px; border-radius:22px;
-  border:1px solid rgba(255,255,255,.10); box-shadow:0 25px 70px rgba(0,0,0,.35); margin-bottom:18px;
-}
-.header-title{ font-size:30px; font-weight:900; margin:0 0 6px; }
-.header-sub{ color:#e5e7eb; font-size:14px; margin:0; opacity:.9 }
+/* Header מינימלי */
+.header-min{background:var(--surface); border:1px solid var(--border);
+  border-radius:18px; padding:18px; box-shadow:0 4px 18px rgba(10,20,40,.04); margin-bottom:14px;}
+.header-min .title{font-size:26px; font-weight:900; color:var(--text); margin:0;}
+.header-min .sub{display:none;} /* הוסר הטקסט המשני */
 
-/* כרטיסים לבנים מרחפים */
-.card{
-  background:#ffffff; color:#0f172a;
-  border:1px solid #e7e8f2; border-radius:20px;
-  padding:18px; box-shadow:0 24px 60px rgba(12,16,39,.22); margin-bottom:16px;
-}
+/* כרטיס סטנדרטי */
+.card{background:var(--surface); border:1px solid var(--border); border-radius:16px;
+  padding:16px; box-shadow:0 4px 18px rgba(10,20,40,.04); margin-bottom:12px;}
 
-/* פס סטטוס */
-.status-bar{
-  display:flex; align-items:center; justify-content:space-between; gap:12px;
-  background:linear-gradient(135deg,#fff,#f7f8fb); color:#0f172a;
-  border:1px solid #e7e8f2; border-radius:16px; padding:12px 16px;
-  box-shadow:0 16px 40px rgba(12,16,39,.12);
-}
-.status-bar .tag{ padding:6px 12px; border-radius:999px; background:#efe9ff; color:#2f1c46; font-weight:800; }
+/* Status bar מינימלי */
+.status-min{display:flex; align-items:center; gap:10px; background:var(--surface);
+  border:1px solid var(--border); border-radius:14px; padding:10px 12px;}
+.chip{padding:4px 10px; border:1px solid var(--border); border-radius:999px; font-weight:800; font-size:12px; color:var(--text); background:#fbfbfd}
 
-/* שדות טופס — שחור על אפור עדין */
-.stTextInput input, .stTextArea textarea{
-  color:#0f172a !important; background:#f3f5f9 !important; border-radius:14px !important;
-}
-.stSelectbox div[data-baseweb="select"]{
-  color:#0f172a !important; background:#f3f5f9 !important; border-radius:14px !important;
-}
-.stTextInput label, .stTextArea label, .stSelectbox label{
-  color:#0b1220 !important; font-weight:800 !important;
-}
-
-/* פוקוס נקי */
+/* קלטים */
+.stTextInput input, .stTextArea textarea{background:#fff !important; color:var(--text) !important;
+  border-radius:12px !important; border:1px solid var(--border) !important;}
+.stSelectbox div[data-baseweb="select"]{background:#fff !important; color:var(--text) !important;
+  border-radius:12px !important; border:1px solid var(--border) !important;}
+.stTextInput label, .stTextArea label, .stSelectbox label{color:var(--text) !important; font-weight:800 !important;}
+/* פוקוס דק ועדין */
 .stTextInput input:focus, .stTextArea textarea:focus, .stSelectbox [data-baseweb="select"]:focus-within{
-  outline:none !important; box-shadow:0 0 0 3px rgba(124,58,237,.18) !important; border-color:#c4b5fd !important;
-}
+  outline:none !important; box-shadow:0 0 0 2px rgba(14,165,164,.18) !important; border-color:var(--primary) !important;}
 
-/* כפתור ראשי */
+/* כפתור ראשי נקי */
 .stButton>button{
-  background:linear-gradient(135deg,#ff8a00,#ffbf47) !important; color:#0b1020 !important;
-  border:0 !important; border-radius:14px !important; padding:10px 16px !important;
-  font-weight:900 !important; box-shadow:0 14px 40px rgba(255,165,0,.35) !important;
-  transition: transform .08s ease-in-out;
-}
-.stButton>button:hover{ transform: translateY(-1px) scale(1.01); }
+  background:var(--primary) !important; color:#fff !important; border:0 !important; border-radius:12px !important;
+  padding:10px 14px !important; font-weight:900 !important; box-shadow:0 4px 16px rgba(14,165,164,.25) !important;}
+.stButton>button:hover{filter:saturate(1.05) brightness(1.02);}
 
-/* KPI — מספרים בלבד */
-.kpi-card{
-  background:#fff; border:1px solid #eceef6; border-radius:16px;
-  padding:14px; box-shadow:0 16px 40px rgba(12,16,39,.12);
-}
-.kpi-title{ font-weight:900; color:#0f172a; margin:0 0 8px }
-.kpi-pair{ display:flex; align-items:baseline; justify-content:center; gap:16px }
-.kpi-num{ font-size:36px; font-weight:900; color:#0f172a; font-variant-numeric: tabular-nums; }
-.kpi-sep{ width:1px; height:22px; background:#e6e8ee }
+/* הסתרת הודעת “Press Enter to submit/apply” */
+div[data-testid="stWidgetInstructions"]{display:none !important;}
 
-/* הילה לפי מצב (דלתא) – בלי טקסט פנימי */
-.card-up{ box-shadow:0 18px 46px rgba(16,185,129,.22); }
-.card-down{ box-shadow:0 18px 46px rgba(239,68,68,.22); }
+/* KPI מינימלי – מספרים בלבד בתוך הקוביה */
+.kpi-title{font-weight:900; color:var(--text); font-size:15px; margin:0 0 8px;}
+.kpi-min{background:#fff; border:1px solid var(--border); border-radius:14px; padding:14px;
+  box-shadow:0 4px 16px rgba(10,20,40,.05);}
+.kpi-body{display:flex; align-items:baseline; justify-content:center; gap:14px;}
+.kpi-num{font-size:38px; font-weight:900; color:var(--text); font-variant-numeric:tabular-nums;}
+.kpi-sep{width:1px; height:22px; background:var(--border);}
 
 /* מובייל */
 @media (max-width:480px){
-  .kpi-num{ font-size:40px }
-  .main .block-container{ padding-left:12px; padding-right:12px; }
+  .kpi-num{font-size:42px}
+  .main .block-container{padding-left:12px; padding-right:12px;}
 }
 </style>
-""",
-    unsafe_allow_html=True,
-)
+""", unsafe_allow_html=True)
 
-st.markdown(
-    """
-<div class="header-wrap">
-  <div class="header-title">🍜 ג'ירף מטבחים – איכויות אוכל</div>
-  <div class="header-sub">טופס הזנת בדיקות איכות + KPI מספריים</div>
+st.markdown("""
+<div class="header-min">
+  <p class="title">ג'ירף מטבחים – איכויות אוכל</p>
+  <p class="sub">טופס הזנת בדיקות איכות + KPI מספריים</p>
 </div>
-""",
-    unsafe_allow_html=True,
-)
+""", unsafe_allow_html=True)
 
 # =========================
 # ------- DATABASE --------
@@ -226,7 +200,7 @@ def refresh_df():
     load_df.clear()
 
 def score_hint(x: int) -> str:
-    return "😟 חלש" if x <= 3 else ("🙂 סביר" if x <= 6 else ("😀 טוב" if x <= 8 else "🤩 מצוין"))
+    return "חלש" if x <= 3 else ("סביר" if x <= 6 else ("טוב" if x <= 8 else "מצוין"))
 
 # KPI חישובים
 def network_avg(df: pd.DataFrame) -> Optional[float]:
@@ -253,37 +227,27 @@ def top_chef_network(df: pd.DataFrame, min_n: int = MIN_CHEF_TOP_M) -> Tuple[Opt
     pick = qual.iloc[0] if not qual.empty else g.iloc[0]
     return str(pick["chef_name"]), float(pick["avg"]), int(pick["n"])
 
-# קומפוננטת KPI (מספרים בלבד)
-def _format_num(v: Optional[float], decimals: int = 2) -> str:
+# פורמט מספרים
+def _fmt(v: Optional[float], decimals: int = 2) -> str:
     if v is None:
         return "—"
     try:
-        if isinstance(v, (int,)) or (isinstance(v, float) and abs(v - int(v)) < 1e-9):
+        if abs(v - int(v)) < 1e-9:
             return f"{int(v)}"
         return f"{float(v):.{decimals}f}"
     except Exception:
         return "—"
 
-def render_kpi_pair(title: str, left_value: Optional[float], right_value: Optional[float], decimals: int = 2):
-    """
-    מציג קופסת KPI: שני מספרים גדולים (שמאל|ימין) עם הילה ירוקה/אדומה לפי דלתא.
-    אין טקסט בתוך הקופסה – רק המספרים.
-    """
-    # דלתא (ימין-שמאל)
-    cls = ""
-    if left_value is not None and right_value is not None:
-        delta = right_value - left_value
-        if delta > 0.001: cls = "card-up"
-        elif delta < -0.001: cls = "card-down"
-
+# רנדר KPI מינימלי
+def render_kpi_min(title: str, left_value: Optional[float], right_value: Optional[float], decimals: int = 2):
     st.markdown(f'<div class="kpi-title">{title}</div>', unsafe_allow_html=True)
     st.markdown(
         f"""
-        <div class="kpi-card {cls}">
-          <div class="kpi-pair">
-            <div class="kpi-num">{_format_num(left_value, decimals)}</div>
+        <div class="kpi-min">
+          <div class="kpi-body">
+            <div class="kpi-num">{_fmt(left_value, decimals)}</div>
             <div class="kpi-sep"></div>
-            <div class="kpi-num">{_format_num(right_value, decimals)}</div>
+            <div class="kpi-num">{_fmt(right_value, decimals)}</div>
           </div>
         </div>
         """,
@@ -294,26 +258,25 @@ def render_kpi_pair(title: str, left_value: Optional[float], right_value: Option
 # ------ LOGIN & CONTEXT --
 # =========================
 def require_auth() -> dict:
-    """מסך כניסה פשוט: סניף או מטה (ללא סיסמה)."""
+    """מסך כניסה: 'סניף' (בחירת שם סניף) או 'מטה' (ללא סיסמה)."""
     if "auth" not in st.session_state:
         st.session_state.auth = {"role": None, "branch": None}
     auth = st.session_state.auth
 
     if not auth["role"]:
         st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.subheader("👋 מסך כניסה")
-
-        role = st.radio("בחר סוג משתמש", options=["סניף", "מטה"], horizontal=True, index=0)
+        st.write("בחרו מצב עבודה:")
+        role = st.radio("", options=["סניף", "מטה"], horizontal=True, index=0, label_visibility="collapsed")
 
         if role == "סניף":
-            branch_choice = st.selectbox("בחר סניף", options=["— בחר —"] + BRANCHES, index=0)
+            branch_choice = st.selectbox("שם סניף", options=["— בחר —"] + BRANCHES, index=0)
             if st.button("המשך"):
                 if branch_choice == "— בחר —":
-                    st.error("בחר סניף כדי להמשיך.")
+                    st.error("בחרו סניף כדי להמשיך.")
                 else:
                     st.session_state.auth = {"role": "branch", "branch": branch_choice}
                     st.rerun()
-        else:  # מטה – ללא סיסמה
+        else:
             if st.button("המשך כ'מטה'"):
                 st.session_state.auth = {"role": "meta", "branch": None}
                 st.rerun()
@@ -324,37 +287,28 @@ def require_auth() -> dict:
 
 auth = require_auth()
 
-# פס סטטוס
-role_txt = 'מטה' if auth['role']=='meta' else 'סניף'
-branch_html = "" if auth["role"] == "meta" else f'— <span class="tag">{auth["branch"]}</span>'
-st.markdown(
-    f"""
-<div class="status-bar">
-  <div>אתה עובד כעת במצב <span class="tag">{role_txt}</span> {branch_html}</div>
-  <div><span class="tag">ניתן להתנתק ולבחור סניף אחר</span></div>
-</div>
-""",
-    unsafe_allow_html=True,
-)
+# Status bar מינימלי — רק שם הסניף או "מטה"
+if auth["role"] == "branch":
+    st.markdown(f'<div class="status-min"><span class="chip">{auth["branch"]}</span></div>', unsafe_allow_html=True)
+else:
+    st.markdown('<div class="status-min"><span class="chip">מטה</span></div>', unsafe_allow_html=True)
 
 # =========================
 # ---------- FORM ---------
 # =========================
 st.markdown('<div class="card">', unsafe_allow_html=True)
-st.subheader("✍️ הזנת בדיקת איכות חדשה")
-
 with st.form("quality_form", clear_on_submit=False):
     colA, colB, colC = st.columns([1,1,1])
 
     if auth["role"] == "meta":
         with colA:
-            selected_branch = st.selectbox("סניף *", options=BRANCHES, index=0)
+            selected_branch = st.selectbox("שם סניף *", options=BRANCHES, index=0)
     else:
         selected_branch = auth["branch"]
         with colA:
-            st.text_input("סניף", value=selected_branch, disabled=True)
+            st.text_input("שם סניף", value=selected_branch, disabled=True)
 
-    # שם הטבח — ללא placeholder
+    # שם הטבח — ללא placeholder וללא הודעת "Press Enter…"
     with colB:
         chef = st.text_input("שם הטבח *")
 
@@ -372,17 +326,16 @@ with st.form("quality_form", clear_on_submit=False):
     with colE:
         notes = st.text_area("הערות (לא חובה)")
 
-    submitted = st.form_submit_button("💾 שמור בדיקה")
+    submitted = st.form_submit_button("שמור בדיקה")
 
 if submitted:
     if not selected_branch or not chef.strip() or not dish:
         st.error("חובה לבחור/להציג סניף, להזין שם טבח ולבחור מנה.")
     else:
         insert_record(selected_branch, chef, dish, score, notes, submitted_by=auth["role"])
-        st.success(f"✅ נשמר: **{selected_branch} · {chef} · {dish}** • ציון **{score}**")
+        st.success(f"נשמר: {selected_branch} · {chef} · {dish} • ציון {score}")
         refresh_df()
         st.balloons()
-
 st.markdown('</div>', unsafe_allow_html=True)
 
 # =========================
@@ -390,47 +343,43 @@ st.markdown('</div>', unsafe_allow_html=True)
 # =========================
 df = load_df()
 st.markdown('<div class="card">', unsafe_allow_html=True)
-st.subheader("📊 מדדי KPI (מספרים בלבד)")
 
 if df.empty:
     st.info("אין נתונים להצגה עדיין.")
 else:
-    # ממוצעים לרשת/סניף
+    # ממוצעים רשת/סניף
     net_avg = network_avg(df)
     br_avg = branch_avg(df, selected_branch) if selected_branch else None
 
-    # ממוצע מנה לרשת/סניף
+    # ממוצעי מנה
     net_dish_avg = dish_avg_network(df, dish) if dish else None
     br_dish_avg = dish_avg_branch(df, selected_branch, dish) if (selected_branch and dish) else None
 
-    # טבח מצטיין ברשת
+    # טבח מצטיין
     chef_name, chef_avg, chef_n = top_chef_network(df, MIN_CHEF_TOP_M)
 
-    # KPI 1 — ממוצע ציון: רשת | סניף
-    render_kpi_pair(
-        title=f"ממוצע ציון — רשת | סניף {selected_branch or ''}".strip(),
+    # KPI 1 — ממוצע ציון: רשת | {branch}
+    render_kpi_min(
+        title=f"ממוצע ציון — רשת | {selected_branch}",
         left_value=net_avg,
         right_value=br_avg,
         decimals=2
     )
+    st.markdown("<br/>", unsafe_allow_html=True)
 
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # KPI 2 — ממוצע ציון למנה: רשת | סניף
-    render_kpi_pair(
-        title=f"ממוצע ציון למנה \"{dish}\" — רשת | סניף {selected_branch or ''}".strip(),
+    # KPI 2 — ממוצע ציון למנה: רשת | {branch}
+    render_kpi_min(
+        title=f"ממוצע ציון למנה \"{dish}\" — רשת | {selected_branch}",
         left_value=net_dish_avg,
         right_value=br_dish_avg,
         decimals=2
     )
+    st.markdown("<br/>", unsafe_allow_html=True)
 
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # KPI 3 — הטבח המצטיין ברשת (שם מעל; בקופסה: ממוצע | N)
-    title = "הטבח המצטיין ברשת" + (f" — {chef_name}" if chef_name else "")
-    # ממוצע | N (N יוצג כמספר שלם)
-    render_kpi_pair(
-        title=title,
+    # KPI 3 — הטבח המצטיין (שם בכותרת; בקוביה: ממוצע | N)
+    chef_title = "הטבח המצטיין ברשת" + (f" — {chef_name}" if chef_name else "")
+    render_kpi_min(
+        title=chef_title,
         left_value=chef_avg,
         right_value=int(chef_n) if chef_n else None,
         decimals=2
@@ -449,10 +398,10 @@ st.markdown('<div class="card">', unsafe_allow_html=True)
 if "admin_logged_in" not in st.session_state:
     st.session_state.admin_logged_in = False
 
-# התנתקות משתמש
+# התנתקות משתמש (כדי לבחור סניף/מצב מחדש)
 c1, c2 = st.columns([4,1])
 with c1:
-    st.caption("התנתקות תאפשר לבחור מצב/סניף מחדש.")
+    st.caption("לחזרה למסך כניסה: התנתק משתמש.")
 with c2:
     if st.button("התנתק משתמש"):
         st.session_state.auth = {"role": None, "branch": None}
@@ -460,7 +409,7 @@ with c2:
 
 # כניסת מנהל
 if not st.session_state.admin_logged_in:
-    st.subheader("🔐 כניסה למנהל")
+    st.write("כניסה למנהל")
     x1, x2, x3 = st.columns([2,1,2])
     with x2:
         pwd = st.text_input("סיסמת מנהל:", type="password", key="admin_password")
@@ -473,7 +422,7 @@ if not st.session_state.admin_logged_in:
 else:
     y1, y2 = st.columns([4,1])
     with y1:
-        st.success("🔐 מחובר כמנהל")
+        st.success("מחובר כמנהל")
     with y2:
         if st.button("התנתק מנהל"):
             st.session_state.admin_logged_in = False
@@ -484,11 +433,11 @@ st.markdown('</div>', unsafe_allow_html=True)
 # אזור מנהל — ייצוא ובדיקות
 if st.session_state.get("admin_logged_in", False):
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader("📥 ייצוא ומידע - אזור מנהל")
+    st.write("ייצוא ומידע")
 
     df_all = load_df()
     csv_bytes = df_all.to_csv(index=False).encode("utf-8")
-    st.download_button("⬇️ הורדת קובץ CSV", data=csv_bytes, file_name="food_quality_export.csv", mime="text/csv")
+    st.download_button("הורדת CSV", data=csv_bytes, file_name="food_quality_export.csv", mime="text/csv")
 
     debug_info = []
     try:
@@ -511,22 +460,22 @@ if st.session_state.get("admin_logged_in", False):
         sheets_ok = False
 
     if sheets_ok:
-        st.success("📊 Google Sheets מחובר")
-        st.markdown(f'<a href="{sheet_url}" target="_blank">🔗 פתח Google Sheet</a>', unsafe_allow_html=True)
+        st.success("Google Sheets מחובר")
+        st.markdown(f'<a href="{sheet_url}" target="_blank">פתח Google Sheet</a>', unsafe_allow_html=True)
     else:
-        st.error("📊 Google Sheets לא מוגדר")
+        st.error("Google Sheets לא מוגדר")
 
-    with st.expander("🔍 מידע טכני"):
+    with st.expander("מידע טכני"):
         for info in debug_info:
             st.text(info)
         with st.expander("הוראות הגדרה"):
             st.markdown("""
-            1) צור/פתח Google Sheet.  
-            2) צור Service Account ב-Google Cloud והורד JSON.  
-            3) ב-Secrets או .env:  
+            1) צור/פתח Google Sheet  
+            2) צור Service Account ב-Google Cloud והורד JSON  
+            3) הוסף ל-Secrets/.env:  
                - GOOGLE_SHEET_URL=...  
                - GOOGLE_SERVICE_ACCOUNT='{"type":"service_account",...}'  
-            4) שתף את הגיליון עם ה-client_email בהרשאת Editor.
+            4) שתף את הגיליון עם ה-client_email בהרשאת Editor
             """)
 
     st.markdown('</div>', unsafe_allow_html=True)
