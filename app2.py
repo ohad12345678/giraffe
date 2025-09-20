@@ -1,19 +1,20 @@
-# app2.py — ג'ירף מטבחים · איכויות אוכל
-# דרישות: streamlit, pandas, python-dotenv, altair
-# אופציונלי: gspread, google-auth, openai (לניתוח GPT)
+# app2.py — 🍜 ג'ירף מטבחים – איכויות אוכל
+# דרישות חובה: streamlit, pandas, python-dotenv
+# אופציונלי: gspread, google-auth (ל-Google Sheets), openai>=1.0.0 (לניתוח GPT)
 # הרצה: streamlit run app2.py
 
 from __future__ import annotations
-import os, json, sqlite3
-from datetime import datetime
+import os
+import json
+import sqlite3
+from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
 
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
-import altair as alt  # גרפי עמודות עם תמיכה טובה בעברית/RTL
 
-# ===== Optional Google Sheets =====
+# נסיון ייבוא של Google Sheets (אופציונלי)
 try:
     import gspread
     from google.oauth2.service_account import Credentials
@@ -24,93 +25,90 @@ except Exception:
 # =========================
 # ------- SETTINGS --------
 # =========================
-st.set_page_config(page_title="ג'ירף מטבחים – איכויות אוכל", layout="wide")
-load_dotenv()
+st.set_page_config(page_title="🍜 ג'ירף מטבחים – איכויות אוכל", layout="wide")
+load_dotenv()  # יטעין .env אם קיים
 
-# סניפים (כולל סביון)
-BRANCHES: List[str] = ["חיפה", "ראשל״צ", "רמה״ח", "נס ציונה", "לנדמרק", "פתח תקווה", "הרצליה", "סביון"]
+# סניפים
+BRANCHES: List[str] = ["חיפה", "ראשל״צ", "רמה״ח", "נס ציונה", "לנדמרק", "פתח תקווה", "הרצליה"]
 
-# מנות (דוגמה ראשונית—ניתן להרחיב)
+# מנות
 DISHES: List[str] = [
-    "פאד תאי", "מלאזית", "פיליפינית", "אפגנית",
-    "קארי דלעת", "סצ'ואן", "ביף רייס",
-    "אורז מטוגן", "מאקי סלמון", "מאקי טונה",
-    "ספייסי סלמון", "נודלס ילדים"
+    "פאד תאי", "מלאזית", "פיליפינית", "אפגנית", "קארי דלעת", "סצ'ואן",
+    "ביף רייס", "אורז מטוגן", "מאקי סלמון", "מאקי טונה", "ספייסי סלמון", "נודלס ילדים"
 ]
 
 DB_PATH = "food_quality.db"
-MIN_CHEF_TOP_M = 5
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+DUP_HOURS = 12            # חלון כפילויות — בדיקה זהה ב-12 שעות אחרונות
+MIN_BRANCH_LEADER_N = 3   # מינימום תצפיות לסניף מוביל לפי ממוצע
+MIN_CHEF_TOP_M = 5        # מינימום תצפיות לטבח מצטיין
 
-# צבעים לגרפים (כחול בהיר וירוק בהיר)
-COLOR_NET = "#93C5FD"    # light blue
-COLOR_BRANCH = "#9AE6B4"  # light green
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
 
 # =========================
 # ---------- STYLE --------
 # =========================
-st.markdown("""
+st.markdown(
+    """
 <style>
-:root{
-  --bg:#f7f8fa; --surface:#ffffff; --text:#0f172a; --muted:#6b7280;
-  --border:#e6e8ef; --primary:#0ea5a4;
-  --mint-50:#ecfdf5; --mint-100:#d1fae5; --mint-700:#0d6b62;
+/* RTL לגוף הדף בלבד */
+.main .block-container { direction: rtl; font-family: "Rubik", -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+/* שמירה על סרגל צד LTR */
+.sidebar .sidebar-content { direction: ltr !important; }
+
+/* Header */
+.header-wrap {
+  background: linear-gradient(135deg, #0f172a 0%, #1f2937 50%, #0b1324 100%);
+  color: #fff; padding: 26px 22px; border-radius: 18px; box-shadow: 0 8px 24px rgba(0,0,0,.25);
+  border: 1px solid rgba(255,255,255,.06); margin-bottom: 22px;
 }
-html,body,.main{background:var(--bg);}
-html, body, .main, .block-container, .sidebar .sidebar-content{direction:rtl;}
-.main .block-container{font-family:"Rubik",-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;}
+.header-title { font-size: 28px; font-weight: 800; margin: 0 0 6px 0; }
+.header-sub { opacity: .9; font-size: 14px; }
 
-/* Header ירקרק עדין */
-.header-min{
-  background:linear-gradient(135deg, var(--mint-50) 0%, #ffffff 70%);
-  border:1px solid var(--mint-100); border-radius:18px; padding:18px;
-  box-shadow:0 6px 22px rgba(13,107,98,.08); margin-bottom:14px;
+/* Cards + KPIs */
+.card { background:#fff; border:1px solid #e9edf5; border-radius:16px; padding:18px; box-shadow:0 8px 20px rgba(16,24,40,.06); margin-bottom:16px; }
+.kpi { padding:16px; border-radius:14px; border:1px solid #eef2f7; box-shadow:0 4px 14px rgba(16,24,40,.06); }
+.kpi .big { font-size:26px; font-weight:900; }
+.kpi .num { font-size:20px; font-weight:800; }
+.hint { color:#6b7280; font-size:12px; }
+.badge { display:inline-block; padding:4px 10px; border-radius:999px; background:#f3f4f6; font-size:12px; margin-right:6px; }
+.btn-primary > button { background: linear-gradient(135deg, #f59e0b, #ff9800); color:white; border:0; border-radius:12px; padding:10px 16px; font-weight:700; width:100%; }
+
+/* שדות טקסט RTL */
+.stTextInput > div > div > input { text-align: right; }
+.stTextArea > div > div > textarea { text-align: right; }
+.stSelectbox > div > div { text-align: right; }
+
+/* ===== Status Bar ===== */
+.status-bar {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:12px 16px; border-radius:14px; margin:8px 0 16px 0;
+  color:#fff; font-weight:700; box-shadow:0 8px 20px rgba(16,24,40,.08);
+  border:1px solid rgba(255,255,255,.08);
 }
-.header-min .title{font-size:26px; font-weight:900; color:var(--mint-700); margin:0;}
-.header-min .sub{display:none;}
+.status-bar .right { display:flex; gap:12px; align-items:center; }
+.status-bar .left  { opacity:.95; }
+.status-bar .tag   { padding:4px 10px; border-radius:999px; background:rgba(255,255,255,.16); font-weight:600; }
 
-/* כרטיס סטנדרטי */
-.card{background:var(--surface); border:1px solid var(--border); border-radius:16px;
-  padding:16px; box-shadow:0 4px 18px rgba(10,20,40,.04); margin-bottom:12px;}
-
-/* Status bar */
-.status-min{display:flex; align-items:center; gap:10px; background:#fff;
-  border:1px solid var(--border); border-radius:14px; padding:10px 12px;}
-.chip{padding:4px 10px; border:1px solid var(--mint-100); border-radius:999px;
-  font-weight:800; font-size:12px; color:var(--mint-700); background:var(--mint-50)}
-
-/* קלטים */
-.stTextInput input, .stTextArea textarea{background:#fff !important; color:var(--text) !important;
-  border-radius:12px !important; border:1px solid var(--border) !important;}
-.stSelectbox div[data-baseweb="select"]{background:#fff !important; color:var(--text) !important;
-  border-radius:12px !important; border:1px solid var(--border) !important;}
-.stTextInput label, .stTextArea label, .stSelectbox label{color:var(--text) !important; font-weight:800 !important;}
-.stTextInput input:focus, .stTextArea textarea:focus, .stSelectbox [data-baseweb="select"]:focus-within{
-  outline:none !important; box-shadow:0 0 0 2px rgba(14,165,164,.18) !important; border-color:var(--primary) !important;}
-
-/* כפתור ראשי */
-.stButton>button{
-  background:var(--primary) !important; color:#fff !important; border:0 !important;
-  border-radius:12px !important; padding:10px 14px !important; font-weight:900 !important;
-  box-shadow:0 4px 16px rgba(14,165,164,.25) !important;}
-.stButton>button:hover{filter:saturate(1.05) brightness(1.02);}
-
-/* הסתרת “Press Enter to apply” */
-div[data-testid="stWidgetInstructions"]{display:none !important;}
-
-/* KPI לטבח מצטיין — מספר יחיד */
-.kpi-title{font-weight:900; color:var(--text); font-size:15px; margin:0 0 8px;}
-.kpi-min{background:#fff; border:1px solid var(--border); border-radius:14px; padding:14px;
-  box-shadow:0 4px 16px rgba(10,20,40,.05);}
-.kpi-single-num{font-size:42px; font-weight:900; color:var(--text); text-align:center;}
+/* צבעים לפי תפקיד */
+.status-bar.meta   { background:linear-gradient(135deg,#0ea5e9,#2563eb); }  /* מטה – כחול */
+.status-bar.branch { background:linear-gradient(135deg,#10b981,#059669); }  /* סניף – ירוק */
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
-st.markdown("""
-<div class="header-min">
-  <p class="title">ג'ירף מטבחים – איכויות אוכל</p>
+st.markdown(
+    """
+<div class="header-wrap">
+  <div class="header-title">🍜 ג'ירף מטבחים – איכויות אוכל</div>
+  <div class="header-sub">טופס הזנת בדיקות איכות + ניתוחים ומדדים חיים</div>
 </div>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 # =========================
 # ------- DATABASE --------
@@ -159,78 +157,9 @@ def load_df() -> pd.DataFrame:
     c.close()
     return df
 
-def _gs_get_creds_and_target():
-    """מאחד טעינת קרדנצ'יאלס והיעד (URL או Title) מה-Secrets/.env."""
-    sheet_target = st.secrets.get("GOOGLE_SHEET_URL", "") or os.getenv("GOOGLE_SHEET_URL", "")
-    creds = st.secrets.get("google_service_account", {})
-    if not creds:
-        env_json = os.getenv("GOOGLE_SERVICE_ACCOUNT", "")
-        if env_json:
-            try:
-                creds = json.loads(env_json)
-            except Exception:
-                pass
-    return creds, sheet_target
-
-def _gs_open_spreadsheet(gc, sheet_target: str):
-    """
-    פותח Spreadsheet לפי URL או שם:
-    - אם sheet_target מתחיל ב-http → open_by_url
-    - אחרת → open (לפי שם הגיליון)
-    """
-    if not sheet_target:
-        raise ValueError("GOOGLE_SHEET_URL חסר (יכול להכיל גם שם גיליון).")
-    if sheet_target.strip().lower().startswith(("http://", "https://")):
-        return gc.open_by_url(sheet_target)
-    return gc.open(sheet_target)
-
-def save_to_google_sheets(branch: str, chef: str, dish: str, score: int, notes: str, timestamp: str) -> tuple[bool, Optional[str]]:
-    """
-    שמירה ל-Google Sheets. תומך גם ב-URL וגם בשם גיליון באותו secret (GOOGLE_SHEET_URL).
-    מחזיר (ok, error). כולל ניסיון נוסף אם project_id בעייתי.
-    """
-    if not GSHEETS_AVAILABLE:
-        return False, "gspread לא מותקן"
-
-    creds, sheet_target = _gs_get_creds_and_target()
-    if not creds:
-        return False, "google_service_account חסר"
-    if not sheet_target:
-        return False, "GOOGLE_SHEET_URL חסר (אפשר לשים בו גם שם גיליון)"
-
-    errors: List[str] = []
-    # ניסיון רגיל
-    try:
-        credentials = Credentials.from_service_account_info(creds).with_scopes(SCOPES)
-        gc = gspread.authorize(credentials)
-        sh = _gs_open_spreadsheet(gc, sheet_target)
-        ws = getattr(sh, "sheet1", sh.worksheets()[0])
-        ws.append_row([timestamp, branch, chef, dish, score, notes or ""], value_input_option="USER_ENTERED")
-        return True, None
-    except Exception as e:
-        errors.append(str(e))
-
-    # ניסיון נוסף — תיקון project_id נפוץ
-    try:
-        creds2 = creds.copy()
-        if str(creds2.get("project_id", "")).strip() in ("giraffe-472505", "גירף-472505", "ג'ירף-472505"):
-            creds2["project_id"] = "giraffe"
-            credentials = Credentials.from_service_account_info(creds2).with_scopes(SCOPES)
-            gc = gspread.authorize(credentials)
-            sh = _gs_open_spreadsheet(gc, sheet_target)
-            ws = getattr(sh, "sheet1", sh.worksheets()[0])
-            ws.append_row([timestamp, branch, chef, dish, score, notes or ""], value_input_option="USER_ENTERED")
-            return True, None
-    except Exception as e:
-        errors.append(str(e))
-
-    return False, " | ".join(errors) if errors else "שגיאה לא ידועה"
-
 def insert_record(branch: str, chef: str, dish: str, score: int, notes: str = "", submitted_by: Optional[str] = None):
-    """שומר ל-SQLite ול-Google Sheets (אם קיים). אין בדיקת כפילויות."""
+    """שומר ל-SQLite, ואז מנסה לשמור ל-Google Sheets (אם מוגדר)."""
     timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-
-    # SQLite
     c = conn()
     cur = c.cursor()
     cur.execute(
@@ -239,67 +168,113 @@ def insert_record(branch: str, chef: str, dish: str, score: int, notes: str = ""
     )
     c.commit()
     c.close()
+    try:
+        save_to_google_sheets(branch, chef, dish, score, notes, timestamp)
+    except Exception as e:
+        st.warning(f"נשמר מקומית, אבל לא ניתן לשמור ב-Google Sheets: {e}")
 
-    # Google Sheets
-    ok, err = save_to_google_sheets(branch, chef, dish, score, notes, timestamp)
-    if not ok and err:
-        st.warning(f"נשמר מקומית, אבל לא נכתב ל-Google Sheets: {err}")
+def _load_google_creds() -> tuple[dict, str]:
+    """מעמיס קרדנציאלס בצורה בטוחה (Secrets קודם, אחרת .env) ומחזיר (creds, sheet_url)."""
+    sheet_url = st.secrets.get("GOOGLE_SHEET_URL", "") or os.getenv("GOOGLE_SHEET_URL", "")
+    creds = st.secrets.get("google_service_account", {})
+    if not creds:
+        env_json = os.getenv("GOOGLE_SERVICE_ACCOUNT", "")
+        if env_json:
+            try:
+                creds = json.loads(env_json)  # ← תקין (במקום eval)
+            except Exception:
+                creds = {}
+    return creds, sheet_url
+
+def save_to_google_sheets(branch: str, chef: str, dish: str, score: int, notes: str, timestamp: str):
+    """שמירה ל-Google Sheets (אם יש ספריות והגדרות)."""
+    if not GSHEETS_AVAILABLE:
+        return
+    creds, sheet_url = _load_google_creds()
+    if not (creds and sheet_url):
+        return
+    try:
+        credentials = Credentials.from_service_account_info(creds).with_scopes(SCOPES)
+        gc = gspread.authorize(credentials)
+        sheet = gc.open_by_url(sheet_url).sheet1
+        sheet.append_row([timestamp, branch, chef, dish, score, notes or ""])
+    except Exception as e:
+        st.warning(f"Google Sheets: {e}")
+
+def has_recent_duplicate(branch: str, chef: str, dish: str, hours: int = DUP_HOURS) -> bool:
+    """בודקת אם קיימת בדיקה זהה (branch+chef+dish) ב-X שעות האחרונות (UTC)."""
+    if hours <= 0:
+        return False
+    cutoff = (datetime.utcnow() - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+    c = conn()
+    cur = c.cursor()
+    cur.execute(
+        """SELECT 1 FROM food_quality
+           WHERE branch=? AND chef_name=? AND dish_name=? AND created_at >= ?
+           LIMIT 1""",
+        (branch.strip(), chef.strip(), dish.strip(), cutoff),
+    )
+    exists = cur.fetchone() is not None
+    c.close()
+    return exists
+
+def kpi_best_branch_by_count(df: pd.DataFrame) -> Tuple[Optional[str], int]:
+    if df.empty: return None, 0
+    s = df.groupby("branch")["id"].count().sort_values(ascending=False)
+    return s.index[0], int(s.iloc[0])
+
+def kpi_current_branch_count(df: pd.DataFrame, branch: Optional[str]) -> int:
+    if df.empty or not branch: return 0
+    return int((df["branch"] == branch).sum())
+
+def kpi_best_avg_branch(df: pd.DataFrame, min_n: int = MIN_BRANCH_LEADER_N) -> Tuple[Optional[str], Optional[float], int]:
+    if df.empty: return None, None, 0
+    g = df.groupby("branch").agg(n=("id","count"), avg=("score","mean")).reset_index()
+    g = g.sort_values(["avg","n"], ascending=[False, False])
+    leader = g[g["n"] >= min_n]
+    if leader.empty:
+        leader = g.iloc[:1]
+    row = leader.iloc[0]
+    return str(row["branch"]), float(row["avg"]), int(row["n"])
+
+def kpi_top_chef(df: pd.DataFrame, min_m: int = MIN_CHEF_TOP_M) -> Tuple[Optional[str], Optional[float], int]:
+    if df.empty: return None, None, 0
+    g = df.groupby("chef_name").agg(n=("id","count"), avg=("score","mean")).reset_index()
+    g = g.sort_values(["n","avg"], ascending=[False, False])
+    qual = g[g["n"] >= min_m]
+    pick = qual.iloc[0] if not qual.empty else g.iloc[0]
+    return str(pick["chef_name"]), float(pick["avg"]), int(pick["n"])
+
+def kpi_top_dish(df: pd.DataFrame) -> Tuple[Optional[str], int]:
+    if df.empty: return None, 0
+    s = df.groupby("dish_name")["id"].count().sort_values(ascending=False)
+    return s.index[0], int(s.iloc[0])
+
+def score_hint(x: int) -> str:
+    return "😟 חלש" if x <= 3 else ("🙂 סביר" if x <= 6 else ("😀 טוב" if x <= 8 else "🤩 מצוין"))
 
 def refresh_df():
     load_df.clear()
-
-def score_hint(x: int) -> str:
-    return "חלש" if x <= 3 else ("סביר" if x <= 6 else ("טוב" if x <= 8 else "מצוין"))
-
-# KPI חישובים
-def network_avg(df: pd.DataFrame) -> Optional[float]:
-    return float(df["score"].mean()) if not df.empty else None
-
-def branch_avg(df: pd.DataFrame, branch: str) -> Optional[float]:
-    d = df[df["branch"] == branch]
-    return float(d["score"].mean()) if not d.empty else None
-
-def dish_avg_network(df: pd.DataFrame, dish: str) -> Optional[float]:
-    d = df[df["dish_name"] == dish]
-    return float(d["score"].mean()) if not d.empty else None
-
-def dish_avg_branch(df: pd.DataFrame, branch: str, dish: str) -> Optional[float]:
-    d = df[(df["branch"] == branch) & (df["dish_name"] == dish)]
-    return float(d["score"].mean()) if not d.empty else None
-
-def top_chef_network_with_branch(df: pd.DataFrame, min_n: int = MIN_CHEF_TOP_M) -> Tuple[Optional[str], Optional[str], Optional[float], int]:
-    """הטבח המצטיין + הסניף הדומיננטי עבורו, ממוצע ונפח."""
-    if df.empty:
-        return None, None, None, 0
-    g = df.groupby("chef_name").agg(n=("id","count"), avg=("score","mean")).reset_index()
-    g = g.sort_values(["n","avg"], ascending=[False, False])
-    qual = g[g["n"] >= min_n]
-    pick = qual.iloc[0] if not qual.empty else g.iloc[0]
-    chef = str(pick["chef_name"])
-    avg = float(pick["avg"])
-    n = int(pick["n"])
-    mode_branch = df[df["chef_name"] == chef]["branch"].value_counts().idxmax()
-    return chef, mode_branch, avg, n
 
 # =========================
 # ------ LOGIN & CONTEXT --
 # =========================
 def require_auth() -> dict:
-    """מסך כניסה: 'סניף' (בחירת סניף) או 'מטה' (ללא סיסמה)."""
+    """מסך כניסה: 'סניף' (בחירת סניף) או 'מטה' (ללא בחירת סניף)."""
     if "auth" not in st.session_state:
         st.session_state.auth = {"role": None, "branch": None}
     auth = st.session_state.auth
 
     if not auth["role"]:
         st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.write("בחרו מצב עבודה:")
-        role = st.radio("", options=["סניף", "מטה"], horizontal=True, index=0, label_visibility="collapsed")
+        st.subheader("👋 מסך כניסה")
+        role = st.radio("בחר סוג משתמש", options=["סניף", "מטה"], horizontal=True, index=0)
 
         if role == "סניף":
-            branch_choice = st.selectbox("שם סניף", options=["— בחר —"] + BRANCHES, index=0)
+            branch_choice = st.selectbox("בחר סניף", options=["— בחר —"] + BRANCHES, index=0)
             if st.button("המשך"):
                 if branch_choice == "— בחר —":
-                    st.error("בחרו סניף כדי להמשיך.")
+                    st.error("בחר סניף כדי להמשיך.")
                 else:
                     st.session_state.auth = {"role": "branch", "branch": branch_choice}
                     st.rerun()
@@ -312,159 +287,156 @@ def require_auth() -> dict:
         st.stop()
     return auth
 
-auth = require_auth()
+auth = require_auth()  # מכאן auth מוגדר
 
-# Status bar — רק שם הסניף או "מטה"
-if auth["role"] == "branch":
-    st.markdown(f'<div class="status-min"><span class="chip">{auth["branch"]}</span></div>', unsafe_allow_html=True)
-else:
-    st.markdown('<div class="status-min"><span class="chip">מטה</span></div>', unsafe_allow_html=True)
+# ===== פס סטטוס עליון =====
+role_class = "meta" if auth["role"] == "meta" else "branch"
+branch_html = "" if auth["role"] == "meta" else f'— <span class="tag">{auth["branch"]}</span>'
+st.markdown(
+    f"""
+<div class="status-bar {role_class}">
+  <div class="left">
+    אתה עובד כעת במצב <span class="tag">{'מטה' if auth['role']=='meta' else 'סניף'}</span> {branch_html}
+  </div>
+  <div class="right">
+    <span class="tag">אפשר להתנתק ולבחור סניף אחר בכל רגע</span>
+  </div>
+</div>
+""",
+    unsafe_allow_html=True,
+)
 
 # =========================
 # ---------- FORM ---------
 # =========================
 st.markdown('<div class="card">', unsafe_allow_html=True)
-with st.form("quality_form", clear_on_submit=False):
-    colA, colB, colC = st.columns([1,1,1])
+st.subheader("✍️ הזנת בדיקת איכות חדשה")
 
-    if auth["role"] == "meta":
-        with colA:
-            selected_branch = st.selectbox("שם סניף *", options=BRANCHES, index=0)
-    else:
-        selected_branch = auth["branch"]
-        with colA:
-            st.text_input("שם סניף", value=selected_branch, disabled=True)
+colA, colB, colC = st.columns([1,1,1])
 
-    with colB:
-        chef = st.text_input("שם הטבח *")  # ללא placeholder
+# בחירת סניף (מטה: בורר; סניף: תצוגה בלבד)
+if auth["role"] == "meta":
+    with colA:
+        selected_branch = st.selectbox("סניף *", options=BRANCHES, index=0)
+else:
+    selected_branch = auth["branch"]
+    with colA:
+        st.text_input("סניף", value=selected_branch, disabled=True)
 
-    with colC:
-        dish = st.selectbox("שם המנה *", options=DISHES, index=0)
+with colB:
+    chef = st.text_input("שם הטבח *", placeholder="הקלד שם טבח...")
+with colC:
+    dish = st.selectbox("שם המנה *", options=DISHES, index=0)
 
-    colD, colE = st.columns([1,1])
-    with colD:
-        score = st.selectbox(
-            "ציון איכות *",
-            options=list(range(1, 11)),
-            index=7,
-            format_func=lambda x: f"{x} - {score_hint(x)}"
-        )
-    with colE:
-        notes = st.text_area("הערות (לא חובה)")
+colD, colE = st.columns([1,1])
+with colD:
+    score = st.selectbox("ציון איכות *", options=list(range(1, 11)), index=7,
+                         format_func=lambda x: f"{x} - {score_hint(x)}")
+with colE:
+    notes = st.text_area("הערות (לא חובה)", placeholder="מרקם, טמפרטורה, תיבול, עקביות...")
 
-    submitted = st.form_submit_button("שמור בדיקה")
+override = st.checkbox("שמור גם אם קיימת בדיקה דומה ב־12 השעות האחרונות (כפילויות)")
 
-if submitted:
+save_col1, save_col2 = st.columns([1,3])
+with save_col1:
+    save = st.button("💾 שמור בדיקה", type="primary")
+
+if save:
     if not selected_branch or not chef.strip() or not dish:
         st.error("חובה לבחור/להציג סניף, להזין שם טבח ולבחור מנה.")
     else:
-        insert_record(selected_branch, chef, dish, score, notes, submitted_by=auth["role"])
-        st.success(f"נשמר: {selected_branch} · {chef} · {dish} • ציון {score}")
-        refresh_df()
-        st.balloons()
+        if (not override) and has_recent_duplicate(selected_branch, chef, dish, DUP_HOURS):
+            st.warning("נמצאה בדיקה קודמת לאותו סניף/טבח/מנה ב־12 השעות האחרונות. סמן 'שמור גם אם…' כדי לאשר בכל זאת.")
+        else:
+            insert_record(selected_branch, chef, dish, score, notes, submitted_by=auth["role"])
+            st.success(f"✅ נשמר: **{selected_branch} · {chef} · {dish}** • ציון **{score}**")
+            refresh_df()
+
 st.markdown('</div>', unsafe_allow_html=True)
 
 # =========================
-# --------- KPI'S ---------
+# --------- KPIs ----------
 # =========================
 df = load_df()
+
 st.markdown('<div class="card">', unsafe_allow_html=True)
+st.subheader("📊 מדדי ביצוע (מתעדכן מיד)")
 
-def bar_compare(title: str, labels: list[str], values: list[float], colors: list[str]):
-    """גרף עמודות RTL ב-Altair: כותרות בעברית יוצגו נכון."""
-    df_chart = pd.DataFrame({"קטגוריה": labels, "ערך": values})
-    ymax = max(values) * 1.25 if values and max(values) > 0 else 1
+best_branch, best_branch_count = kpi_best_branch_by_count(df)
+current_branch_count = kpi_current_branch_count(df, selected_branch)
+best_avg_branch, best_avg_value, best_avg_n = kpi_best_avg_branch(df, MIN_BRANCH_LEADER_N)
+top_chef, top_chef_avg, top_chef_n = kpi_top_chef(df, MIN_CHEF_TOP_M)
+top_dish, top_dish_count = kpi_top_dish(df)
 
-    base = (
-        alt.Chart(df_chart)
-        .encode(
-            x=alt.X("קטגוריה:N", sort=labels, axis=alt.Axis(labelAngle=0, title=None)),
-            y=alt.Y("ערך:Q", scale=alt.Scale(domain=(0, ymax)), axis=alt.Axis(title=None)),
-        )
-    )
-
-    bars = base.mark_bar(size=56).encode(
-        color=alt.Color(
-            "קטגוריה:N",
-            scale=alt.Scale(domain=labels, range=colors),
-            legend=None,
-        )
-    )
-
-    text = base.mark_text(dy=-8, fontWeight="bold").encode(
-        text=alt.Text("ערך:Q", format=".2f")
-    )
-
-    st.markdown(f"**{title}**")
-    st.altair_chart(bars + text, use_container_width=True)
-
-if df.empty:
-    st.info("אין נתונים להצגה עדיין.")
-else:
-    # ממוצעי רשת/סניף
-    net_avg = network_avg(df)
-    br_avg = branch_avg(df, selected_branch) if selected_branch else None
-
-    # ממוצעי מנה
-    net_dish_avg = dish_avg_network(df, dish) if dish else None
-    br_dish_avg = dish_avg_branch(df, selected_branch, dish) if (selected_branch and dish) else None
-
-    # 1) השוואה — ממוצע ציון רשת מול הסניף
-    if net_avg is not None and br_avg is not None:
-        bar_compare(
-            title=f"ממוצע ציון — השוואה רשת מול {selected_branch}",
-            labels=["רשת", selected_branch],
-            values=[net_avg, br_avg],
-            colors=[COLOR_NET, COLOR_BRANCH],
-        )
+k1, k2, k3, k4 = st.columns(4)
+with k1:
+    st.markdown('<div class="kpi">', unsafe_allow_html=True)
+    st.markdown("#### הסניף המוביל בבדיקות")
+    if best_branch is None:
+        st.write("אין נתונים")
     else:
-        st.info("אין מספיק נתונים להצגת ממוצע ציון רשת/סניף.")
+        current_html = f'<span class="big">{current_branch_count}</span>' if selected_branch else '<span class="num">—</span>'
+        st.write(f"הנוכחי: {current_html} | **{best_branch}** — **{best_branch_count}** בדיקות", unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
-    st.markdown("<hr style='border:none;border-top:1px solid #e6e8ef;margin:14px 0'/>", unsafe_allow_html=True)
-
-    # 2) השוואה — ממוצע ציון למנה (רשת מול הסניף)
-    if net_dish_avg is not None and br_dish_avg is not None:
-        bar_compare(
-            title=f"ממוצע ציון למנה \"{dish}\" — רשת מול {selected_branch}",
-            labels=["רשת · מנה", f"{selected_branch} · מנה"],
-            values=[net_dish_avg, br_dish_avg],
-            colors=[COLOR_NET, COLOR_BRANCH],
-        )
+with k2:
+    st.markdown('<div class="kpi">', unsafe_allow_html=True)
+    st.markdown("#### ממוצע ציון — נוכחי מול המוביל")
+    if best_avg_branch is None:
+        st.write("אין נתונים")
     else:
-        st.info("אין מספיק נתונים למנה הנבחרת להצגת השוואה.")
+        cur_avg = df[df["branch"] == selected_branch]["score"].mean() if selected_branch else None
+        cur_avg_str = f'<span class="big">{cur_avg:.2f}</span>' if cur_avg is not None and not pd.isna(cur_avg) else '—'
+        st.write(
+            f"הנוכחי: {cur_avg_str} | המוביל: **{best_avg_branch}** ({best_avg_value:.2f})",
+            unsafe_allow_html=True
+        )
+        if best_avg_n < MIN_BRANCH_LEADER_N:
+            st.caption("הערה: הסניף המוביל לפי ממוצע עומד על מדגם קטן.")
+    st.markdown('</div>', unsafe_allow_html=True)
 
-    st.markdown("<hr style='border:none;border-top:1px solid #e6e8ef;margin:14px 0'/>", unsafe_allow_html=True)
+with k3:
+    st.markdown('<div class="kpi">', unsafe_allow_html=True)
+    st.markdown("#### הטבח המצטיין ברשת")
+    if top_chef is None:
+        st.write("אין נתונים")
+    else:
+        st.write(f"**{top_chef}** — ממוצע **{top_chef_avg:.2f}** (על סמך {top_chef_n} בדיקות)")
+        if top_chef_n < MIN_CHEF_TOP_M:
+            st.caption("מדגם קטן — מוצג המצטיין הזמין.")
+    st.markdown('</div>', unsafe_allow_html=True)
 
-    # 3) הטבח המצטיין — שם טבח + שם מסעדה (סניף) + ממוצע, ללא השוואה
-    chef_name, chef_branch, chef_avg, chef_n = top_chef_network_with_branch(df, MIN_CHEF_TOP_M)
-    title = "הטבח המצטיין ברשת"
-    if chef_name:
-        title += f" — {chef_name} · {chef_branch or ''}".strip()
-    st.markdown(f'<div class="kpi-title">{title}</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="kpi-min"><div class="kpi-single-num">{}</div></div>'.format(
-            "—" if chef_avg is None else f"{chef_avg:.2f}"
-        ),
-        unsafe_allow_html=True,
-    )
+with k4:
+    st.markdown('<div class="kpi">', unsafe_allow_html=True)
+    st.markdown("#### המנה הכי נבחנת")
+    if top_dish is None:
+        st.write("אין נתונים")
+    else:
+        st.write(f"**{top_dish}** — {top_dish_count} בדיקות")
+    st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown('</div>', unsafe_allow_html=True)
 
 # =========================
-# ----- GPT ANALYSIS ------
+# ------ GPT ANALYSIS -----
 # =========================
 st.markdown('<div class="card">', unsafe_allow_html=True)
-st.markdown("**ניתוח GPT**")
+st.subheader("🤖 ניתוח עם ChatGPT")
 
-if df.empty:
-    st.info("אין נתונים לניתוח עדיין.")
-    st.markdown('</div>', unsafe_allow_html=True)
+api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY", "")
+org_id  = st.secrets.get("OPENAI_ORG") or os.getenv("OPENAI_ORG", "")
+# project_id אופציונלי — לעתים לא נתמך, נמנע כברירת מחדל
+
+if not api_key:
+    st.warning("🔑 לא נמצא מפתח OpenAI. הוסף OPENAI_API_KEY ל-Secrets או ל-.env כדי להפעיל ניתוח AI.")
+    st.info("💡 ללא מפתח, עדיין ניתן להשתמש בכל יתר התכונות של האפליקציה.")
 else:
-    SYSTEM_ANALYST = (
-        "אתה אנליסט דאטה דובר עברית. מוצגת לך טבלה עם העמודות: "
-        "id, branch, chef_name, dish_name, score, notes, created_at. "
-        "ענה בתמציתיות, בעברית, עם דגשים והמלצות קצרות."
-    )
+    gpt_col1, gpt_col2 = st.columns([2,1])
+    with gpt_col1:
+        user_q = st.text_input("שאלה על הנתונים (למשל: מה המנה הכי נבחנת בכל סניף?)", placeholder="כתוב כאן שאלה חופשית...")
+    with gpt_col2:
+        do_insights = st.button("בצע ניתוח כללי")
+        ask_btn = st.button("שלח שאלה")
 
     def df_to_csv_for_llm(df_in: pd.DataFrame, max_rows: int = 400) -> str:
         d = df_in.copy()
@@ -475,18 +447,9 @@ else:
     def call_openai(system_prompt: str, user_prompt: str) -> str:
         try:
             from openai import OpenAI
-            api_key = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", ""))
-            org_id = st.secrets.get("OPENAI_ORG", os.getenv("OPENAI_ORG", ""))
-            project_id = st.secrets.get("OPENAI_PROJECT", os.getenv("OPENAI_PROJECT", ""))
-            if not api_key:
-                return "חסר מפתח OPENAI_API_KEY (ב-Secrets או בקובץ ‎.env)."
-
             client_kwargs = {"api_key": api_key}
             if org_id:
                 client_kwargs["organization"] = org_id
-            if project_id:
-                client_kwargs["project"] = project_id
-
             client = OpenAI(**client_kwargs)
             resp = client.chat.completions.create(
                 model="gpt-4o-mini",
@@ -496,32 +459,30 @@ else:
                 ],
                 temperature=0.2,
             )
-            return (resp.choices[0].message.content or "").strip()
+            return resp.choices[0].message.content.strip()
         except Exception as e:
-            return f"שגיאה בקריאה ל-OpenAI: {e}"
+            return f"❌ שגיאה בקריאה ל-OpenAI: {e}"
 
-    col_q, col_btn = st.columns([3, 1])
-    with col_q:
-        user_q = st.text_input("שאלה על הנתונים (לא חובה)")
-    with col_btn:
-        ask_btn = st.button("שלח")
-    run_overview = st.button("ניתוח כללי")
+    SYSTEM_ANALYST = (
+        "אתה אנליסט דאטה דובר עברית. מוצגת לך טבלת בדיקות עם עמודות: "
+        "id, branch, chef_name, dish_name, score, notes, created_at. "
+        "סכם תובנות מרכזיות, דגשים, חריגים והמלצות קצרות. השתמש בשפה פשוטה וברורה."
+    )
 
-    if run_overview or ask_btn:
-        table_csv = df_to_csv_for_llm(df)
-        if run_overview:
-            user_prompt = f"הנה הטבלה בפורמט CSV:\n{table_csv}\n\nסכם מגמות, חריגים והמלצות קצרות לניהול."
+    if do_insights or (user_q and ask_btn):
+        if df.empty:
+            st.info("אין נתונים לניתוח עדיין. התחל למלא בדיקות!")
         else:
-            user_prompt = (
-                f"שאלה: {user_q}\n\n"
-                f"הנה הטבלה בפורמט CSV (עד 400 שורות):\n{table_csv}\n\n"
-                f"ענה בעברית, תן נימוק קצר לכל מסקנה."
-            )
-        with st.spinner("מנתח..."):
-            answer = call_openai(SYSTEM_ANALYST, user_prompt)
-        st.write(answer)
+            table_csv = df_to_csv_for_llm(df)
+            if do_insights:
+                user_prompt = f"הנה הטבלה בפורמט CSV:\n{table_csv}\n\nהפק תובנות מרכזיות בעברית."
+            else:
+                user_prompt = f"שאלה: {user_q}\n\nהנה הטבלה בפורמט CSV (עד 400 שורות):\n{table_csv}\n\nענה בעברית וקשר לנתונים."
+            with st.spinner("חושב..."):
+                answer = call_openai(SYSTEM_ANALYST, user_prompt)
+            st.markdown(answer)
 
-    st.markdown('</div>', unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
 
 # =========================
 # ----- ADMIN PANEL -------
@@ -534,64 +495,83 @@ st.markdown('<div class="card">', unsafe_allow_html=True)
 if "admin_logged_in" not in st.session_state:
     st.session_state.admin_logged_in = False
 
-# התנתקות משתמש (לבחירת סניף/מצב מחדש)
-c1, c2 = st.columns([4,1])
-with c1:
-    st.caption("לחזרה למסך כניסה: התנתק משתמש.")
-with c2:
+# כפתור התנתקות משתמש (לא מנהל)
+logout_col1, logout_col2 = st.columns([4,1])
+with logout_col1:
+    st.caption("אם נכנסת לסניף שגוי, אפשר להתנתק ולבחור שוב.")
+with logout_col2:
     if st.button("התנתק משתמש"):
         st.session_state.auth = {"role": None, "branch": None}
         st.rerun()
 
-# כניסת מנהל
+# בדיקת סיסמת מנהל
 if not st.session_state.admin_logged_in:
-    st.write("כניסה למנהל")
-    x1, x2, x3 = st.columns([2,1,2])
-    with x2:
-        pwd = st.text_input("סיסמת מנהל:", type="password", key="admin_password")
+    st.subheader("🔐 כניסה למנהל")
+    col1, col2, col3 = st.columns([2,1,2])
+    with col2:
+        password_input = st.text_input("סיסמת מנהל:", type="password", key="admin_password")
         if st.button("התחבר", use_container_width=True):
-            if pwd == admin_password:
+            if password_input == admin_password:
                 st.session_state.admin_logged_in = True
                 st.rerun()
             else:
                 st.error("סיסמה שגויה")
 else:
-    y1, y2 = st.columns([4,1])
-    with y1:
-        st.success("מחובר כמנהל")
-    with y2:
+    col1, col2 = st.columns([4,1])
+    with col1:
+        st.success("🔐 מחובר כמנהל")
+    with col2:
         if st.button("התנתק מנהל"):
             st.session_state.admin_logged_in = False
             st.rerun()
 
 st.markdown('</div>', unsafe_allow_html=True)
 
-# אזור מנהל — ייצוא ומידע
+# חלק ייצוא - רק למנהלים
 if st.session_state.get("admin_logged_in", False):
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.write("ייצוא ומידע")
+    st.subheader("📥 ייצוא ומידע - אזור מנהל")
 
-    df_all = load_df()
-    csv_bytes = df_all.to_csv(index=False).encode("utf-8")
-    st.download_button("הורדת CSV", data=csv_bytes, file_name="food_quality_export.csv", mime="text/csv")
+    # הורדת CSV
+    csv_bytes = df.to_csv(index=False).encode("utf-8")
+    st.download_button("⬇️ הורדת קובץ CSV", data=csv_bytes, file_name="food_quality_export.csv", mime="text/csv")
 
-    # מידע טכני + בדיקת חיבור/כתיבה
-    gspread_ok = GSHEETS_AVAILABLE
-    creds_present = bool(st.secrets.get("google_service_account", {})) or bool(os.getenv("GOOGLE_SERVICE_ACCOUNT", ""))
-    sheet_target = st.secrets.get("GOOGLE_SHEET_URL", "") or os.getenv("GOOGLE_SHEET_URL", "")
+    # בדיקות חיבור ל-Google Sheets
+    debug_info = []
+    try:
+        creds, sheet_url = _load_google_creds()
+        debug_info.append(f"gspread זמין: {GSHEETS_AVAILABLE}")
+        debug_info.append(f"google_service_account קיים: {bool(creds)}")
+        debug_info.append(f"GOOGLE_SHEET_URL קיים: {bool(sheet_url)}")
+        if creds:
+            debug_info.append(f"client_email: {creds.get('client_email','חסר')}")
+        sheets_configured = bool(GSHEETS_AVAILABLE and creds and sheet_url)
+    except Exception as e:
+        debug_info.append(f"שגיאה בקריאת קונפיג: {e}")
+        sheets_configured = False
 
-    with st.expander("מידע טכני"):
-        st.text(f"gspread זמין: {gspread_ok}")
-        st.text(f"google_service_account קיים: {creds_present}")
-        st.text(f"יעד (URL או שם גיליון): {'קיים' if sheet_target else 'חסר'}")
+    if sheets_configured:
+        st.success("📊 Google Sheets מחובר")
+        st.markdown(f'<a href="{sheet_url}" target="_blank">🔗 פתח Google Sheet</a>', unsafe_allow_html=True)
+    else:
+        st.error("📊 Google Sheets לא מוגדר")
 
-    with st.expander("בדיקת חיבור Google Sheets"):
-        st.caption(f"יעד: {sheet_target or '—'}")
-        if st.button("🔗 בדיקת כתיבה (TEST)"):
-            ok, err = save_to_google_sheets("TEST", "BOT", "בדיקה", 0, "ping", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
-            if ok:
-                st.success("✅ חיבור תקין — נכתבה שורת TEST לגיליון.")
-            else:
-                st.error(f"❌ נכשל: {err}")
+    with st.expander("🔍 מידע טכני"):
+        for info in debug_info:
+            st.text(info)
+        with st.expander("הוראות הגדרה"):
+            st.markdown("""
+            **להגדרת Google Sheets:**
+            1. צור Google Sheet חדש
+            2. צור Service Account ב-Google Cloud Console
+            3. הורד את קובץ ה-JSON
+            4. אפשרות A (ענן/Secrets): הוסף ל-Streamlit Secrets:
+               - `google_service_account` — JSON מלא
+               - `GOOGLE_SHEET_URL` — קישור לגיליון
+               אפשרות B (מקומית): שים את שני הערכים ב-.env:
+               - `GOOGLE_SERVICE_ACCOUNT='{"type":"service_account",...}'`
+               - `GOOGLE_SHEET_URL=https://...`
+            5. שתף את הגיליון עם ה-`client_email` מהרשאות (Editor)
+            """)
 
     st.markdown('</div>', unsafe_allow_html=True)
