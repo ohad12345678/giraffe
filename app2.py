@@ -370,3 +370,79 @@ else:
 
         if overview_btn or ask_btn:
             csv_text = df_to_csv_for_llm(df)
+            if overview_btn:
+                user_prompt = f"הנה הטבלה בפורמט CSV:\n{csv_text}\n\nסכם מגמות, חריגים והמלצות קצרות."
+            else:
+                user_prompt = f"שאלה: {user_q}\n\nהנה הטבלה (CSV, עד 400 שורות):\n{csv_text}\n\nענה בעברית, עם נימוק קצר."
+
+            with st.spinner("מנתח..."):
+                try:
+                    resp = gpt_client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[{"role":"system","content":
+                                   "אתה אנליסט דאטה דובר עברית. העמודות: id, branch, chef_name, dish_name, score, notes, created_at."},
+                                  {"role":"user","content": user_prompt}],
+                        temperature=0.2,
+                    )
+                    ans = (resp.choices[0].message.content or "").strip()
+                    st.write(ans)
+                except Exception as e:
+                    st.error(f"שגיאת GPT: {e}")
+st.markdown('</div>', unsafe_allow_html=True)
+
+# ---------- Admin ----------
+admin_password = st.secrets.get("ADMIN_PASSWORD", "admin123")
+st.markdown("---")
+st.markdown('<div class="card">', unsafe_allow_html=True)
+if "admin_logged_in" not in st.session_state: st.session_state.admin_logged_in = False
+
+c1,c2 = st.columns([4,1])
+with c1: st.caption("לחזרה למסך הכניסה: התנתק משתמש.")
+with c2:
+    if st.button("התנתק משתמש"):
+        st.session_state.auth = {"role":None,"branch":None}; st.rerun()
+
+if not st.session_state.admin_logged_in:
+    st.subheader("🔐 כניסה למנהל")
+    mid = st.columns([2,1,2])[1]
+    with mid:
+        pwd = st.text_input("סיסמת מנהל:", type="password")
+        if st.button("התחבר", use_container_width=True):
+            if pwd == admin_password:
+                st.session_state.admin_logged_in = True; st.rerun()
+            else:
+                st.error("סיסמה שגויה")
+else:
+    st.success("מחובר כמנהל")
+    cc1,cc2 = st.columns(2)
+    with cc2:
+        if st.button("התנתק מנהל"): st.session_state.admin_logged_in = False; st.rerun()
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+if st.session_state.get("admin_logged_in", False):
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.subheader("📥 ייצוא ובדיקות")
+    data = load_df().to_csv(index=False).encode("utf-8")
+    st.download_button("⬇️ הורדת CSV", data=data, file_name="food_quality_export.csv", mime="text/csv")
+
+    # PING ל-Sheets ו-GPT
+    colx, coly = st.columns(2)
+    with colx:
+        if st.button("🧪 בדיקת כתיבה ל-Sheets"):
+            ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            ok = save_to_google_sheets("DEBUG","PING","PING",0,"בדיקת מערכת",ts)
+            st.success("✅ נכתב לגיליון") if ok else st.error("❌ הכתיבה נכשלה")
+    with coly:
+        gc, ge = get_openai_client()
+        if ge: st.info("GPT לא הוגדר")
+        else:
+            if st.button("🧪 בדיקת GPT"):
+                try:
+                    gc.chat.completions.create(model="gpt-4o-mini",
+                                               messages=[{"role":"user","content":"ping"}],
+                                               temperature=0.0)
+                    st.success("✅ GPT מחובר")
+                except Exception as e:
+                    st.error(f"❌ GPT שגיאה: {e}")
+    st.markdown('</div>', unsafe_allow_html=True)
