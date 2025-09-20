@@ -5,7 +5,7 @@
 from __future__ import annotations
 import sqlite3
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple, List
 
 import pandas as pd
@@ -204,7 +204,7 @@ def score_hint(x:int)->str:
 
 def has_recent_duplicate(branch:str, chef:str, dish:str, hours:int=DUP_HOURS)->bool:
     if hours<=0: return False
-    cutoff = (datetime.utcnow()-timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+    cutoff = (datetime.now(timezone.utc)-timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
     c = conn(); cur = c.cursor()
     cur.execute("""SELECT 1 FROM food_quality WHERE branch=? AND chef_name=? AND dish_name=? AND created_at >= ? LIMIT 1""",
                 (branch.strip(), chef.strip(), dish.strip(), cutoff))
@@ -212,7 +212,7 @@ def has_recent_duplicate(branch:str, chef:str, dish:str, hours:int=DUP_HOURS)->b
     c.close(); return ok
 
 def insert_record(branch:str, chef:str, dish:str, score:int, notes:str, submitted_by:Optional[str]=None):
-    ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     # SQLite
     c = conn(); cur = c.cursor()
     cur.execute("""INSERT INTO food_quality (branch, chef_name, dish_name, score, notes, created_at, submitted_by)
@@ -430,7 +430,7 @@ if st.session_state.get("admin_logged_in", False):
     colx, coly = st.columns(2)
     with colx:
         if st.button("🧪 בדיקת כתיבה ל-Sheets"):
-            ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
             ok = save_to_google_sheets("DEBUG","PING","PING",0,"בדיקת מערכת",ts)
             st.success("✅ נכתב לגיליון") if ok else st.error("❌ הכתיבה נכשלה")
     with coly:
