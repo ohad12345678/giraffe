@@ -1,9 +1,12 @@
-streamlit
-pandas
-python-dotenv
-openai
+streamlit==1.37.1
+pandas==2.2.2
+gspread==6.1.2
+google-auth==2.33.0
+# אם יש לך גרפים עם Altair:
+altair==5.3.0
+# אם אתה מפעיל GPT:
+# openai==1.40.0
 
-altair
 
 
 
