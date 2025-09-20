@@ -89,67 +89,118 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets",
           "https://www.googleapis.com/auth/drive"]
 
 def _normalize_private_key(creds: dict) -> dict:
+    """מתקן את ה-private key - מחליף \\n ב-\n אם נדרש"""
     pk = creds.get("private_key")
     if isinstance(pk, str) and "\\n" in pk:
-        creds = creds.copy(); creds["private_key"] = pk.replace("\\n","\n")
+        creds = creds.copy()
+        creds["private_key"] = pk.replace("\\n", "\n")
     return creds
 
 def _get_sheets_config():
-    # מזהה גיליון: URL/ID/Title – מספיק אחד. אם נתת URL ב-Secrets נשתמש בו.
-    sheet_url = st.secrets.get("GOOGLE_SHEET_URL")
-    sheet_id  = st.secrets.get("GOOGLE_SHEET_ID")
-    sheet_title = st.secrets.get("GOOGLE_SHEET_TITLE")  # לא חובה אם יש URL/ID
-    ws_name = st.secrets.get("GOOGLE_SHEET_WORKSHEET") or "sheet1"
+    """מחזיר את הגדרות החיבור לגוגל שיטס"""
+    try:
+        sheet_url = st.secrets.get("GOOGLE_SHEET_URL")
+        sheet_id = st.secrets.get("GOOGLE_SHEET_ID")
+        sheet_title = st.secrets.get("GOOGLE_SHEET_TITLE")
+        ws_name = st.secrets.get("GOOGLE_SHEET_WORKSHEET", "sheet1")
 
-    creds = dict(st.secrets.get("google_service_account", {}))
-    if creds: creds = _normalize_private_key(creds)
+        # נסה לקבל את ה-service account credentials
+        creds_dict = dict(st.secrets.get("google_service_account", {}))
+        
+        if not creds_dict:
+            return None, None, ws_name
+            
+        # תקן את ה-private key
+        creds_dict = _normalize_private_key(creds_dict)
+        
+        # וודא שיש את כל השדות הנדרשים
+        required_fields = ["type", "project_id", "private_key", "client_email", "client_id", "token_uri"]
+        missing_fields = [field for field in required_fields if field not in creds_dict]
+        
+        if missing_fields:
+            st.error(f"חסרים שדות ב-google_service_account: {', '.join(missing_fields)}")
+            return None, None, ws_name
 
-    identifier = sheet_url or sheet_id or sheet_title
-    return creds, identifier, ws_name
+        identifier = sheet_url or sheet_id or sheet_title
+        return creds_dict, identifier, ws_name
+        
+    except Exception as e:
+        st.error(f"שגיאה בקריאת הגדרות Sheets: {e}")
+        return None, None, "sheet1"
 
 def _open_spreadsheet(gc, identifier: str):
-    if identifier.startswith("http"): return gc.open_by_url(identifier)
+    """פותח את הגיליון לפי מזהה - URL, ID או כותרת"""
+    if identifier.startswith("http"):
+        return gc.open_by_url(identifier)
     if "/" not in identifier and " " not in identifier:
-        try: return gc.open_by_key(identifier)
-        except Exception: pass
+        try:
+            return gc.open_by_key(identifier)
+        except Exception:
+            pass
     return gc.open(identifier)
 
 def save_to_google_sheets(branch: str, chef: str, dish: str, score: int, notes: str, ts: str) -> bool:
+    """שומר רשומה לגוגל שיטס"""
     if not GSHEETS_AVAILABLE:
-        st.warning("gspread/google-auth לא מותקנות — לא ניתן לכתוב לגיליון."); return False
-    creds, ident, ws_name = _get_sheets_config()
-    if not creds:
-        st.warning("חסר [google_service_account] ב-Secrets."); return False
-    if not ident:
-        st.warning("חסר מזהה גיליון (GOOGLE_SHEET_URL/ID/TITLE) ב-Secrets."); return False
+        st.warning("gspread/google-auth לא מותקנות — לא ניתן לכתוב לגיליון.")
+        return False
+        
+    creds_dict, identifier, ws_name = _get_sheets_config()
+    
+    if not creds_dict:
+        st.warning("חסרות הגדרות google_service_account ב-secrets.toml")
+        return False
+        
+    if not identifier:
+        st.warning("חסר מזהה גיליון (GOOGLE_SHEET_URL/ID/TITLE) ב-secrets.toml")
+        return False
+        
     try:
-        credentials = Credentials.from_service_account_info(creds).with_scopes(SCOPES)
+        # יצירת credentials ואימות
+        credentials = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         gc = gspread.authorize(credentials)
-        sh = _open_spreadsheet(gc, ident)
-        try: ws = sh.worksheet(ws_name)
-        except Exception: ws = sh.add_worksheet(title=ws_name, rows=1000, cols=12)
+        
+        # פתיחת הגיליון
+        sh = _open_spreadsheet(gc, identifier)
+        
+        # פתיחת/יצירת worksheet
+        try:
+            ws = sh.worksheet(ws_name)
+        except Exception:
+            ws = sh.add_worksheet(title=ws_name, rows=1000, cols=12)
+            # הוספת כותרות אם זה worksheet חדש
+            ws.append_row(["תאריך/שעה", "סניף", "שם טבח", "מנה", "ציון", "הערות"])
+        
+        # הוספת השורה
         ws.append_row([ts, branch, chef, dish, score, notes or ""], value_input_option="USER_ENTERED")
         return True
+        
     except Exception as e:
-        st.warning(f"שגיאת Google Sheets: {e}"); return False
+        st.error(f"שגיאת Google Sheets: {e}")
+        return False
 
 # ---------- שכבת Secrets: GPT ----------
 def get_openai_client():
+    """מחזיר OpenAI client או שגיאה"""
     api_key = st.secrets.get("OPENAI_API_KEY", "")
-    if not api_key: return None, "חסר OPENAI_API_KEY ב-Secrets."
+    if not api_key or api_key == "sk-PASTE_YOUR_KEY_HERE":
+        return None, "חסר OPENAI_API_KEY תקין ב-secrets.toml"
+        
     org = st.secrets.get("OPENAI_ORG", "")
     proj = st.secrets.get("OPENAI_PROJECT", "")
+    
     try:
         from openai import OpenAI
         kw = {"api_key": api_key}
-        if org:  kw["organization"] = org
+        if org: kw["organization"] = org
         if proj: kw["project"] = proj
         return OpenAI(**kw), None
     except Exception as e:
         return None, f"שגיאת OpenAI: {e}"
 
 # ---------- לוגיקה ----------
-def score_hint(x:int)->str: return "😟 חלש" if x<=3 else ("🙂 סביר" if x<=6 else ("😀 טוב" if x<=8 else "🤩 מצוין"))
+def score_hint(x:int)->str: 
+    return "😟 חלש" if x<=3 else ("🙂 סביר" if x<=6 else ("😀 טוב" if x<=8 else "🤩 מצוין"))
 
 def has_recent_duplicate(branch:str, chef:str, dish:str, hours:int=DUP_HOURS)->bool:
     if hours<=0: return False
@@ -319,79 +370,3 @@ else:
 
         if overview_btn or ask_btn:
             csv_text = df_to_csv_for_llm(df)
-            if overview_btn:
-                user_prompt = f"הנה הטבלה בפורמט CSV:\n{csv_text}\n\nסכם מגמות, חריגים והמלצות קצרות."
-            else:
-                user_prompt = f"שאלה: {user_q}\n\nהנה הטבלה (CSV, עד 400 שורות):\n{csv_text}\n\nענה בעברית, עם נימוק קצר."
-
-            with st.spinner("מנתח..."):
-                try:
-                    resp = gpt_client.chat.completions.create(
-                        model="gpt-4o-mini",
-                        messages=[{"role":"system","content":
-                                   "אתה אנליסט דאטה דובר עברית. העמודות: id, branch, chef_name, dish_name, score, notes, created_at."},
-                                  {"role":"user","content": user_prompt}],
-                        temperature=0.2,
-                    )
-                    ans = (resp.choices[0].message.content or "").strip()
-                    st.write(ans)
-                except Exception as e:
-                    st.error(f"שגיאת GPT: {e}")
-st.markdown('</div>', unsafe_allow_html=True)
-
-# ---------- Admin ----------
-admin_password = st.secrets.get("ADMIN_PASSWORD", "admin123")
-st.markdown("---")
-st.markdown('<div class="card">', unsafe_allow_html=True)
-if "admin_logged_in" not in st.session_state: st.session_state.admin_logged_in = False
-
-c1,c2 = st.columns([4,1])
-with c1: st.caption("לחזרה למסך הכניסה: התנתק משתמש.")
-with c2:
-    if st.button("התנתק משתמש"):
-        st.session_state.auth = {"role":None,"branch":None}; st.rerun()
-
-if not st.session_state.admin_logged_in:
-    st.subheader("🔐 כניסה למנהל")
-    mid = st.columns([2,1,2])[1]
-    with mid:
-        pwd = st.text_input("סיסמת מנהל:", type="password")
-        if st.button("התחבר", use_container_width=True):
-            if pwd == admin_password:
-                st.session_state.admin_logged_in = True; st.rerun()
-            else:
-                st.error("סיסמה שגויה")
-else:
-    st.success("מחובר כמנהל")
-    cc1,cc2 = st.columns(2)
-    with cc2:
-        if st.button("התנתק מנהל"): st.session_state.admin_logged_in = False; st.rerun()
-
-st.markdown('</div>', unsafe_allow_html=True)
-
-if st.session_state.get("admin_logged_in", False):
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader("📥 ייצוא ובדיקות")
-    data = load_df().to_csv(index=False).encode("utf-8")
-    st.download_button("⬇️ הורדת CSV", data=data, file_name="food_quality_export.csv", mime="text/csv")
-
-    # PING ל-Sheets ו-GPT
-    colx, coly = st.columns(2)
-    with colx:
-        if st.button("🧪 בדיקת כתיבה ל-Sheets"):
-            ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-            ok = save_to_google_sheets("DEBUG","PING","PING",0,"בדיקת מערכת",ts)
-            st.success("✅ נכתב לגיליון") if ok else st.error("❌ הכתיבה נכשלה")
-    with coly:
-        gc, ge = get_openai_client()
-        if ge: st.info("GPT לא הוגדר")
-        else:
-            if st.button("🧪 בדיקת GPT"):
-                try:
-                    gc.chat.completions.create(model="gpt-4o-mini",
-                                               messages=[{"role":"user","content":"ping"}],
-                                               temperature=0.0)
-                    st.success("✅ GPT מחובר")
-                except Exception as e:
-                    st.error(f"❌ GPT שגיאה: {e}")
-    st.markdown('</div>', unsafe_allow_html=True)
